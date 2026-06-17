@@ -57,7 +57,20 @@
     oil: "assets/oil.png",
     barrier: "assets/barrier.png",
     coin: "assets/coin.png",
-    invincible: "assets/invincible.png"
+    invincible: "assets/invincible.png",
+    ground: [
+      "assets/ground_easy.png",
+      "assets/ground_normal.png",
+      "assets/ground_hard.png"
+    ],
+    scenery: [
+      "assets/Tree00.png",
+      "assets/Plants00.png",
+      "assets/Plants01.png",
+      "assets/Plant00.png",
+      "assets/StreetLight00.png",
+      "assets/StreetLight.png"
+    ]
   };
 
   const ASSET_CROPS = {
@@ -67,7 +80,13 @@
     "assets/enemy_car02.png": { x: 77, y: 18, w: 102, h: 224 },
     "assets/cone.png": { x: 50, y: 24, w: 156, h: 194 },
     "assets/oil.png": { x: 15, y: 38, w: 226, h: 184 },
-    "assets/barrier.png": { x: 27, y: 67, w: 202, h: 117 }
+    "assets/barrier.png": { x: 27, y: 67, w: 202, h: 117 },
+    "assets/Tree00.png": { x: 20, y: 14, w: 215, h: 229 },
+    "assets/Plants00.png": { x: 36, y: 40, w: 724, h: 712 },
+    "assets/Plants01.png": { x: 6, y: 27, w: 116, h: 72 },
+    "assets/Plant00.png": { x: 36, y: 40, w: 724, h: 712 },
+    "assets/StreetLight00.png": { x: 93, y: 6, w: 70, h: 505 },
+    "assets/StreetLight.png": { x: 93, y: 6, w: 70, h: 505 }
   };
 
   const assets = {};
@@ -110,7 +129,15 @@
       clearTime: 45,
       doubleSpawnChance: 0.12,
       coinSpawn: 0.88,
-      curveStrength: 58
+      curveStrength: 58,
+      theme: {
+        sky: ["#1b3150", "#243f38", "#101822"],
+        skyline: "#24312c",
+        ground: ["rgba(95,160,90,0.12)", "rgba(190,230,170,0.08)"],
+        groundImage: "assets/ground_easy.png",
+        sceneryTypes: ["tree", "plant", "plant", "plant"],
+        sceneryTarget: 10
+      }
     },
     {
       name: "中級",
@@ -123,7 +150,15 @@
       clearTime: 55,
       doubleSpawnChance: 0.22,
       coinSpawn: 0.76,
-      curveStrength: 76
+      curveStrength: 76,
+      theme: {
+        sky: ["#30233e", "#403041", "#15131c"],
+        skyline: "#2d2630",
+        ground: ["rgba(150,120,100,0.10)", "rgba(230,190,130,0.08)"],
+        groundImage: "assets/ground_normal.png",
+        sceneryTypes: ["plant", "roadSign", "roadSign", "tree"],
+        sceneryTarget: 8
+      }
     },
     {
       name: "上級",
@@ -136,7 +171,15 @@
       clearTime: 65,
       doubleSpawnChance: 0.34,
       coinSpawn: 0.68,
-      curveStrength: 92
+      curveStrength: 92,
+      theme: {
+        sky: ["#11192e", "#1c1b35", "#090a12"],
+        skyline: "#1d1b2b",
+        ground: ["rgba(90,110,150,0.10)", "rgba(230,230,255,0.06)"],
+        groundImage: "assets/ground_hard.png",
+        sceneryTypes: ["light", "light", "light", "roadSign", "plant"],
+        sceneryTarget: 7
+      }
     }
   ];
 
@@ -156,7 +199,12 @@
   let inputCooldown = 0;
   let gamepadCooldown = 0;
   let coinCount = 0;
+  let comboCount = 0;
+  let comboTimer = 0;
+  let comboPopTimer = 0;
+  let comboPopScore = 0;
   let invincibleTimer = 0;
+  let audioCtx = null;
 
   let resultData = null;
 
@@ -184,6 +232,7 @@
 
   let obstacles = [];
   let pickups = [];
+  let scenery = [];
   let particles = [];
   let roadLines = [];
 
@@ -331,19 +380,31 @@
     spawnTimer = 1.0;
     coinTimer = 0.55;
     coinCount = 0;
+    comboCount = 0;
+    comboTimer = 0;
+    comboPopTimer = 0;
+    comboPopScore = 0;
     invincibleTimer = 0;
     resetRoadRoute();
 
     obstacles = [];
     pickups = [];
+    scenery = [];
     particles = [];
     resultData = null;
+
+    const targetScenery = currentStage.theme?.sceneryTarget || 8;
+    for (let i = 0; i < targetScenery; i++) {
+      spawnScenery(-i * 135 - Math.random() * 80);
+    }
 
     player.lane = 2;
     player.x = laneCenter(player.lane);
     player.targetX = player.x;
     player.stunTimer = 0;
     player.oilTimer = 0;
+
+    playSound("start");
   }
 
   function movePlayer(dir) {
@@ -355,6 +416,7 @@
     player.lane = Math.max(0, Math.min(road.lanes - 1, player.lane));
     player.targetX = laneCenter(player.lane);
     inputCooldown = 0.1;
+    playSound("move");
   }
 
   function triggerOilSlip() {
@@ -369,12 +431,16 @@
     player.lane = Math.max(0, Math.min(road.lanes - 1, player.lane));
     player.targetX = laneCenter(player.lane);
     addParticles(player.x, player.y + 20, "#111", 20);
+    comboCount = 0;
+    comboTimer = 0;
+    playSound("oil");
   }
 
   function activateInvincible() {
     invincibleTimer = Math.max(invincibleTimer, 5.0);
     addParticles(player.x, player.y - 20, "#fff36b", 34);
     addParticles(player.x, player.y + 20, "#20b7ff", 18);
+    playSound("power");
   }
 
   function spawnObstacle() {
@@ -473,6 +539,96 @@
     });
   }
 
+  function spawnScenery(y = -90) {
+    for (let attempt = 0; attempt < 16; attempt++) {
+      const yy = y - attempt * 36;
+      const side = Math.random() < 0.5 ? -1 : 1;
+      const type = chooseSceneryType();
+      const variant = type === "tree" || type === "plant" || type === "light" ? sceneryVariantForType(type) : 0;
+      const isTree = type === "tree";
+      const assetPath = getAsset("scenery", variant)?.path || "";
+      const isSmallPlant = assetPath.includes("Plants01");
+      const displayW = type === "light"
+        ? 18 + Math.random() * 6
+        : isTree
+          ? 50 + Math.random() * 22
+          : isSmallPlant
+            ? 40 + Math.random() * 18
+            : 34 + Math.random() * 20;
+      const displayH = type === "light"
+        ? displayW * 7.2
+        : isTree
+          ? displayW * 1.12
+          : isSmallPlant
+            ? displayW * 0.62
+            : displayW;
+      const roadEdge = side < 0 ? roadLeftAt(yy) : roadRightAt(yy);
+      const margin = displayW / 2 + 28 + Math.random() * 58;
+      const x = side < 0 ? roadEdge - margin : roadEdge + margin;
+      const item = {
+        x,
+        y: yy,
+        w: displayW,
+        h: displayH,
+        side,
+        margin,
+        type,
+        variant,
+        sway: Math.random() * Math.PI * 2
+      };
+
+      if (!sceneryOverlaps(item)) {
+        scenery.push(item);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function chooseSceneryType() {
+    const types = currentStage.theme?.sceneryTypes || ["tree", "plant"];
+    return types[Math.floor(Math.random() * types.length)];
+  }
+
+  function sceneryVariantForType(type) {
+    const list = assets.scenery || [];
+    const indexes = list
+      .map((asset, index) => {
+        const path = asset.path || "";
+        const isTree = path.includes("Tree");
+        const isPlant = path.includes("Plant");
+        const isLight = path.includes("StreetLight");
+        return asset.loaded && (
+          (type === "tree" && isTree) ||
+          (type === "plant" && isPlant) ||
+          (type === "light" && isLight)
+        ) ? index : -1;
+      })
+      .filter(index => index >= 0);
+
+    if (indexes.length > 0) {
+      return indexes[Math.floor(Math.random() * indexes.length)];
+    }
+
+    return randomAssetVariant("scenery");
+  }
+
+  function sceneryOverlaps(candidate) {
+    const padX = 12;
+    const padY = 18;
+
+    return scenery.some(item => {
+      const sameSide = item.side === candidate.side;
+      if (!sameSide) return false;
+
+      return (
+        Math.abs(item.x - candidate.x) < (item.w + candidate.w) / 2 + padX &&
+        Math.abs(item.y - candidate.y) < (item.h + candidate.h) / 2 + padY
+      );
+    });
+  }
+
   function addParticles(x, y, color, count) {
     for (let i = 0; i < count; i++) {
       particles.push({
@@ -526,6 +682,7 @@
       addParticles(player.x, player.y - 40, "#fff36b", 36);
     }
 
+    playSound(clear ? "clear" : "crash");
     state = STATES.RESULT;
   }
 
@@ -578,6 +735,11 @@
     if (player.stunTimer > 0) player.stunTimer -= dt;
     if (player.oilTimer > 0) player.oilTimer -= dt;
     if (invincibleTimer > 0) invincibleTimer -= dt;
+    if (comboTimer > 0) comboTimer -= dt;
+    if (comboPopTimer > 0) comboPopTimer -= dt;
+    if (comboTimer <= 0 && comboCount > 0) {
+      comboCount = 0;
+    }
 
     speed = Math.min(
       currentStage.maxSpeed,
@@ -603,6 +765,8 @@
         line.y = -70;
       }
     }
+
+    updateScenery(dt);
 
     spawnTimer -= dt;
     coinTimer -= dt;
@@ -646,8 +810,13 @@
       if (rectsHit(playerBox, coinBox)) {
         coin.remove = true;
         coinCount += 1;
-        score += 100;
+        comboCount = comboTimer > 0 ? comboCount + 1 : 1;
+        comboTimer = 2.2;
+        comboPopScore = 100 + Math.max(0, comboCount - 1) * 30;
+        comboPopTimer = 0.9;
+        score += comboPopScore;
         addParticles(coin.x, coin.y, "#fff36b", 16);
+        playSound(comboCount >= 2 ? "combo" : "coin");
 
         if (coinCount % 5 === 0) {
           activateInvincible();
@@ -673,7 +842,7 @@
         h: ob.h * 0.75
       };
 
-      if (rectsHit(playerBox, obstacleBox)) {
+      if (ob.lane === player.lane && rectsHit(playerBox, obstacleBox)) {
         if (invincibleTimer > 0) {
           ob.remove = true;
           score += 60;
@@ -701,9 +870,29 @@
     }
   }
 
+  function updateScenery(dt) {
+    for (const item of scenery) {
+      item.y += speed * dt;
+      item.sway += dt * 1.5;
+
+      const roadEdge = item.side < 0 ? roadLeftAt(item.y) : roadRightAt(item.y);
+      item.x = item.side < 0 ? roadEdge - item.margin : roadEdge + item.margin;
+      item.x += Math.sin(item.sway) * 2;
+    }
+
+    scenery = scenery.filter(item => item.y < H + 120);
+
+    let attempts = 0;
+    const targetScenery = currentStage.theme?.sceneryTarget || 8;
+    while (scenery.length < targetScenery && attempts < 20) {
+      spawnScenery(-100 - Math.random() * 360);
+      attempts++;
+    }
+  }
+
   function keepObstacleSpacing() {
     const cars = obstacles
-      .filter(ob => !ob.remove)
+      .filter(ob => !ob.remove && ob.type === "car")
       .sort((a, b) => b.y - a.y);
 
     for (let i = 0; i < cars.length; i++) {
@@ -817,6 +1006,7 @@
 
     drawBackground();
     drawRoad();
+    drawScenery();
     drawPickups();
     drawObstacles();
 
@@ -833,20 +1023,47 @@
   }
 
   function drawBackground() {
+    const sky = currentStage.theme?.sky || ["#171d35", "#24234b", "#101018"];
     const bg = ctx.createLinearGradient(0, 0, 0, H);
-    bg.addColorStop(0, "#171d35");
-    bg.addColorStop(0.5, "#24234b");
-    bg.addColorStop(1, "#101018");
+    bg.addColorStop(0, sky[0]);
+    bg.addColorStop(0.5, sky[1]);
+    bg.addColorStop(1, sky[2]);
 
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
-    ctx.fillStyle = "#28202a";
+    drawGroundTexture();
+  }
 
-    for (let i = 0; i < 11; i++) {
-      const x = (i * 76 + Math.sin(i * 2.1) * 20) % W;
-      const h = 80 + (i % 5) * 28;
-      ctx.fillRect(x - 18, H - h - 65, 36, h);
+  function drawGroundTexture() {
+    const groundAsset = getAssetByPath("ground", currentStage.theme?.groundImage);
+    if (groundAsset) {
+      const tile = 256;
+      const offsetY = road.scroll % tile;
+
+      ctx.save();
+      ctx.globalAlpha = 0.88;
+      for (let y = -tile; y < H + tile; y += tile) {
+        for (let x = 0; x < W; x += tile) {
+          ctx.drawImage(groundAsset.img, x, y + offsetY, tile, tile);
+        }
+      }
+      ctx.restore();
+      return;
+    }
+
+    const colors = currentStage.theme?.ground || ["rgba(255,255,255,0.04)", "rgba(0,0,0,0.08)"];
+
+    ctx.fillStyle = colors[0];
+    for (let y = -40; y < H + 80; y += 120) {
+      ctx.fillRect(0, y + (road.scroll % 120), W, 34);
+    }
+
+    ctx.fillStyle = colors[1];
+    for (let i = 0; i < 18; i++) {
+      const x = (i * 97 + 23) % W;
+      const y = (i * 141 + road.scroll) % (H + 120) - 60;
+      ctx.fillRect(x, y, 3, 18);
     }
   }
 
@@ -869,6 +1086,81 @@
         drawCurveLine(y => roadLeftAt(y) + laneWidth() * i, startY, endY);
       }
     }
+  }
+
+  function drawScenery() {
+    for (const item of scenery) {
+      if (item.type === "roadSign") {
+        drawSceneryFallback(item);
+        continue;
+      }
+
+      drawImageOrFallback(
+        "scenery",
+        item.x,
+        item.y,
+        item.w,
+        item.h,
+        () => drawSceneryFallback(item),
+        item.variant
+      );
+    }
+  }
+
+  function drawSceneryFallback(item) {
+    ctx.save();
+    ctx.translate(item.x, item.y);
+
+    if (item.type === "light") {
+      ctx.fillStyle = "rgba(255,245,170,0.16)";
+      ctx.beginPath();
+      ctx.ellipse(0, item.h * 0.14, item.w * 0.38, item.h * 0.44, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#1b1b22";
+      ctx.fillRect(-3, -item.h * 0.28, 6, item.h * 0.62);
+
+      ctx.fillStyle = "#f7e78a";
+      ctx.beginPath();
+      ctx.arc(0, -item.h * 0.32, item.w * 0.14, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (item.type === "roadSign") {
+      ctx.fillStyle = "#1b1b22";
+      ctx.fillRect(-3, -item.h * 0.15, 6, item.h * 0.44);
+
+      ctx.fillStyle = "#ffd166";
+      roundRect(-item.w * 0.28, -item.h * 0.38, item.w * 0.56, item.h * 0.28, 4);
+      ctx.fill();
+
+      ctx.fillStyle = "#111";
+      ctx.fillRect(-item.w * 0.18, -item.h * 0.29, item.w * 0.36, 4);
+    } else if (item.h > item.w * 1.05) {
+      ctx.fillStyle = "#3a2316";
+      ctx.fillRect(-5, -item.h * 0.08, 10, item.h * 0.36);
+
+      ctx.fillStyle = "#2f8f4e";
+      ctx.beginPath();
+      ctx.arc(0, -item.h * 0.18, item.w * 0.34, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#58b86b";
+      ctx.beginPath();
+      ctx.arc(-item.w * 0.15, -item.h * 0.28, item.w * 0.25, 0, Math.PI * 2);
+      ctx.arc(item.w * 0.15, -item.h * 0.28, item.w * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.fillStyle = "#3f9f55";
+      for (let i = -2; i <= 2; i++) {
+        ctx.save();
+        ctx.rotate(i * 0.28);
+        ctx.beginPath();
+        ctx.ellipse(i * 6, 0, item.w * 0.11, item.h * 0.42, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    ctx.restore();
   }
 
   function drawCurvedBand(leftPad, rightPad, color) {
@@ -1012,6 +1304,11 @@
 
     if (selected && selected.loaded) return selected;
     return list.find(asset => asset.loaded) || null;
+  }
+
+  function getAssetByPath(key, path) {
+    const list = assets[key] || [];
+    return list.find(asset => asset.path === path && asset.loaded) || null;
   }
 
   function drawImageOrFallback(key, x, y, w, h, fallback, variant = 0) {
@@ -1184,7 +1481,8 @@
 
   function drawGameUI() {
     ctx.fillStyle = "rgba(0,0,0,0.48)";
-    roundRect(18, 18, 222, invincibleTimer > 0 ? 136 : 116, 12);
+    const panelH = 116 + (comboCount >= 2 ? 24 : 0) + (invincibleTimer > 0 ? 24 : 0);
+    roundRect(18, 18, 222, panelH, 12);
     ctx.fill();
 
     ctx.fillStyle = "#fff";
@@ -1201,10 +1499,18 @@
     ctx.fillText(`CLEARまで ${remain}秒`, 32, 96);
     ctx.fillText(`COIN ${coinCount} / NEXT ${coinsToInvincible}`, 32, 119);
 
+    let uiY = 142;
+    if (comboCount >= 2) {
+      ctx.fillStyle = "#fff36b";
+      ctx.font = "bold 15px sans-serif";
+      ctx.fillText(`COMBO x${comboCount} +${comboPopScore}`, 32, uiY);
+      uiY += 24;
+    }
+
     if (invincibleTimer > 0) {
       ctx.fillStyle = "#fff36b";
       ctx.font = "bold 15px sans-serif";
-      ctx.fillText(`無敵 ${Math.ceil(invincibleTimer)}秒`, 32, 142);
+      ctx.fillText(`無敵 ${Math.ceil(invincibleTimer)}秒`, 32, uiY);
     }
 
     if (player.stunTimer > 0) {
@@ -1223,6 +1529,17 @@
       ctx.fillStyle = "#fff36b";
       ctx.font = "bold 30px sans-serif";
       ctx.fillText("INVINCIBLE!", W / 2, 160);
+    }
+
+    if (comboPopTimer > 0 && comboCount >= 2) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#fff36b";
+      ctx.font = "bold 28px sans-serif";
+      ctx.fillText(`COMBO x${comboCount}`, W / 2, 235);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "bold 18px monospace";
+      ctx.fillText(`+${comboPopScore}`, W / 2, 262);
     }
 
     ctx.fillStyle = "rgba(255,255,255,0.8)";
@@ -1385,6 +1702,111 @@
     ctx.quadraticCurveTo(x, y, x + rr, y);
   }
 
+  function initAudio() {
+    if (audioCtx) {
+      if (audioCtx.state === "suspended") audioCtx.resume();
+      return;
+    }
+
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    audioCtx = new AudioContext();
+  }
+
+  function playSound(type) {
+    if (!audioCtx) return;
+
+    const now = audioCtx.currentTime;
+    const gain = audioCtx.createGain();
+    const osc = audioCtx.createOscillator();
+    const noiseGain = audioCtx.createGain();
+
+    gain.connect(audioCtx.destination);
+    osc.connect(gain);
+
+    let startFreq = 440;
+    let endFreq = 440;
+    let duration = 0.1;
+    let wave = "square";
+    let volume = 0.04;
+
+    if (type === "coin") {
+      startFreq = 880;
+      endFreq = 1320;
+      duration = 0.12;
+      wave = "triangle";
+      volume = 0.055;
+    } else if (type === "combo") {
+      startFreq = 1040;
+      endFreq = 1660;
+      duration = 0.16;
+      wave = "triangle";
+      volume = 0.065;
+    } else if (type === "power") {
+      startFreq = 520;
+      endFreq = 1180;
+      duration = 0.35;
+      wave = "sawtooth";
+      volume = 0.055;
+    } else if (type === "move") {
+      startFreq = 320;
+      endFreq = 260;
+      duration = 0.055;
+      volume = 0.025;
+    } else if (type === "oil") {
+      startFreq = 180;
+      endFreq = 90;
+      duration = 0.22;
+      wave = "sawtooth";
+      volume = 0.045;
+    } else if (type === "crash") {
+      startFreq = 120;
+      endFreq = 42;
+      duration = 0.36;
+      wave = "sawtooth";
+      volume = 0.075;
+    } else if (type === "clear") {
+      startFreq = 660;
+      endFreq = 1320;
+      duration = 0.42;
+      wave = "triangle";
+      volume = 0.06;
+    } else if (type === "start") {
+      startFreq = 420;
+      endFreq = 720;
+      duration = 0.12;
+      wave = "square";
+      volume = 0.04;
+    }
+
+    osc.type = wave;
+    osc.frequency.setValueAtTime(startFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(1, endFreq), now + duration);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+    osc.start(now);
+    osc.stop(now + duration + 0.02);
+
+    if (type === "crash" || type === "oil") {
+      const bufferSize = Math.floor(audioCtx.sampleRate * duration);
+      const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = (Math.random() * 2 - 1) * (1 - i / bufferSize);
+      }
+
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = buffer;
+      noise.connect(noiseGain);
+      noiseGain.connect(audioCtx.destination);
+      noiseGain.gain.setValueAtTime(type === "crash" ? 0.055 : 0.025, now);
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+      noise.start(now);
+      noise.stop(now + duration);
+    }
+  }
+
   function loop(time) {
     const dt = Math.min(0.033, (time - lastTime) / 1000 || 0);
     lastTime = time;
@@ -1467,6 +1889,7 @@
 
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
+    initAudio();
 
     const p = getCanvasPoint(e.clientX, e.clientY);
 
@@ -1506,6 +1929,7 @@
   });
 
   window.addEventListener("keydown", (e) => {
+    initAudio();
     const key = e.key.toLowerCase();
 
     if (state === STATES.PLAYING) {
