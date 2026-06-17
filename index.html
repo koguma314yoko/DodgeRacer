@@ -177,8 +177,9 @@
         skyline: "#1d1b2b",
         ground: ["rgba(90,110,150,0.10)", "rgba(230,230,255,0.06)"],
         groundImage: "assets/ground_hard.png",
-        sceneryTypes: ["light", "light", "light", "roadSign", "plant"],
-        sceneryTarget: 7
+        sceneryTypes: ["roadSign", "plant", "roadSign"],
+        sceneryTarget: 5,
+        streetLights: true
       }
     }
   ];
@@ -233,6 +234,7 @@
   let obstacles = [];
   let pickups = [];
   let scenery = [];
+  let streetLights = [];
   let particles = [];
   let roadLines = [];
 
@@ -390,12 +392,19 @@
     obstacles = [];
     pickups = [];
     scenery = [];
+    streetLights = [];
     particles = [];
     resultData = null;
 
     const targetScenery = currentStage.theme?.sceneryTarget || 8;
     for (let i = 0; i < targetScenery; i++) {
       spawnScenery(-i * 135 - Math.random() * 80);
+    }
+
+    if (currentStage.theme?.streetLights) {
+      for (let i = 0; i < 5; i++) {
+        spawnStreetLight(-i * 260 - 120, i % 2 === 0 ? 1 : -1);
+      }
     }
 
     player.lane = 2;
@@ -481,7 +490,7 @@
       h,
       type,
       assetVariant: type === "car" ? randomAssetVariant("car") : 0,
-      speedRatio: type === "car" ? 0.72 + Math.random() * 0.58 : 1,
+      speedRatio: type === "car" ? 1.02 + Math.random() * 0.28 : 1,
       drift: type === "car" ? (Math.random() - 0.5) * 0.08 : 0,
       wheelSpin: Math.random() * Math.PI * 2,
       passed: false,
@@ -494,7 +503,7 @@
       const lane = Math.floor(Math.random() * road.lanes);
       const blocked = obstacles.some(ob => {
         const closeLane = Math.abs(ob.lane - lane) <= 1;
-        return closeLane && Math.abs(ob.y + 90) < h + ob.h + 26;
+        return closeLane && Math.abs(ob.y + 90) < h + ob.h + 54;
       });
 
       if (!blocked) return lane;
@@ -505,8 +514,8 @@
 
   function findObstacleSpawnY(lane, h) {
     const baseY = -90;
-    const laneGap = h + 34;
-    const anyLaneGap = h + 16;
+    const laneGap = h + 86;
+    const anyLaneGap = h + 34;
     let y = baseY;
 
     for (let attempt = 0; attempt < 8; attempt++) {
@@ -525,18 +534,40 @@
   }
 
   function spawnCoin() {
-    const lane = Math.floor(Math.random() * road.lanes);
+    const placement = chooseCoinPlacement();
 
     pickups.push({
       type: "coin",
-      lane,
-      x: laneCenter(lane, -60),
-      y: -60,
+      lane: placement.lane,
+      x: laneCenter(placement.lane, placement.y),
+      y: placement.y,
       w: 34,
       h: 34,
       remove: false,
       spin: Math.random() * Math.PI * 2
     });
+  }
+
+  function chooseCoinPlacement() {
+    for (let attempt = 0; attempt < 14; attempt++) {
+      const lane = Math.floor(Math.random() * road.lanes);
+      const y = -60 - attempt * 34;
+
+      const blockedByObstacle = obstacles.some(ob => {
+        const sameLane = ob.lane === lane;
+        const closeLane = Math.abs(ob.lane - lane) <= 1;
+        const gap = Math.abs(ob.y - y);
+        return (sameLane && gap < (ob.h + 56) / 2) || (closeLane && gap < 42);
+      });
+
+      const blockedByCoin = pickups.some(coin => coin.lane === lane && Math.abs(coin.y - y) < 56);
+
+      if (!blockedByObstacle && !blockedByCoin) {
+        return { lane, y };
+      }
+    }
+
+    return { lane: Math.floor(Math.random() * road.lanes), y: -180 };
   }
 
   function spawnScenery(y = -90) {
@@ -584,6 +615,25 @@
     }
 
     return false;
+  }
+
+  function spawnStreetLight(y = -90, side = Math.random() < 0.5 ? -1 : 1) {
+    const variant = sceneryVariantForType("light");
+    const displayW = 22;
+    const displayH = displayW * 7.2;
+    const roadEdge = side < 0 ? roadLeftAt(y) : roadRightAt(y);
+    const margin = displayW / 2 + 42;
+
+    streetLights.push({
+      x: side < 0 ? roadEdge - margin : roadEdge + margin,
+      y,
+      w: displayW,
+      h: displayH,
+      side,
+      margin,
+      type: "light",
+      variant
+    });
   }
 
   function chooseSceneryType() {
@@ -767,6 +817,7 @@
     }
 
     updateScenery(dt);
+    updateStreetLights(dt);
 
     spawnTimer -= dt;
     coinTimer -= dt;
@@ -799,6 +850,7 @@
       coin.y += speed * dt;
       coin.x = laneCenter(coin.lane, coin.y);
       coin.spin += dt * 12;
+      keepCoinAwayFromObstacles(coin);
 
       const coinBox = {
         x: coin.x,
@@ -858,8 +910,6 @@
       }
     }
 
-    keepObstacleSpacing();
-
     pickups = pickups.filter(item => item.y < H + 100 && !item.remove);
     obstacles = obstacles.filter(ob => ob.y < H + 120 && !ob.remove);
 
@@ -867,6 +917,21 @@
 
     if (gameTime >= currentStage.clearTime && state === STATES.PLAYING) {
       finishGame(true);
+    }
+  }
+
+  function keepCoinAwayFromObstacles(coin) {
+    for (const ob of obstacles) {
+      if (Math.abs(ob.lane - coin.lane) > 0) continue;
+
+      const minGap = (ob.h + coin.h) / 2 + 18;
+      const gap = Math.abs(ob.y - coin.y);
+
+      if (gap < minGap) {
+        const direction = coin.y < ob.y ? -1 : 1;
+        coin.y = ob.y + direction * minGap;
+        coin.x = laneCenter(coin.lane, coin.y);
+      }
     }
   }
 
@@ -890,24 +955,22 @@
     }
   }
 
-  function keepObstacleSpacing() {
-    const cars = obstacles
-      .filter(ob => !ob.remove && ob.type === "car")
-      .sort((a, b) => b.y - a.y);
+  function updateStreetLights(dt) {
+    if (!currentStage.theme?.streetLights) return;
 
-    for (let i = 0; i < cars.length; i++) {
-      const front = cars[i];
+    for (const light of streetLights) {
+      light.y += speed * dt;
+      const roadEdge = light.side < 0 ? roadLeftAt(light.y) : roadRightAt(light.y);
+      light.x = light.side < 0 ? roadEdge - light.margin : roadEdge + light.margin;
+    }
 
-      for (let j = i + 1; j < cars.length; j++) {
-        const back = cars[j];
-        if (front.lane !== back.lane) continue;
+    streetLights = streetLights.filter(light => light.y < H + 180);
 
-        const minGap = (front.h + back.h) / 2 + 28;
-        if (front.y - back.y < minGap) {
-          back.y = front.y - minGap;
-          back.x = laneCenter(back.lane, back.y) + back.drift * laneWidth();
-        }
-      }
+    let attempts = 0;
+    while (streetLights.length < 5 && attempts < 10) {
+      const topLight = streetLights.reduce((top, light) => light.y < top.y ? light : top, streetLights[0] || { y: 0, side: 1 });
+      spawnStreetLight(topLight.y - 260, -topLight.side);
+      attempts++;
     }
   }
 
@@ -1007,6 +1070,7 @@
     drawBackground();
     drawRoad();
     drawScenery();
+    drawStreetLights();
     drawPickups();
     drawObstacles();
 
@@ -1103,6 +1167,20 @@
         item.h,
         () => drawSceneryFallback(item),
         item.variant
+      );
+    }
+  }
+
+  function drawStreetLights() {
+    for (const light of streetLights) {
+      drawImageOrFallback(
+        "scenery",
+        light.x,
+        light.y,
+        light.w,
+        light.h,
+        () => drawSceneryFallback(light),
+        light.variant
       );
     }
   }
