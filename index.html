@@ -63,6 +63,11 @@
       "assets/ground_normal.png",
       "assets/ground_hard.png"
     ],
+    roadSign: [
+      "assets/RoadSign00.png",
+      "assets/RoadSign01.png",
+      "assets/RoadSign02.png"
+    ],
     scenery: [
       "assets/Tree00.png",
       "assets/Plants00.png",
@@ -86,7 +91,10 @@
     "assets/Plants01.png": { x: 6, y: 27, w: 116, h: 72 },
     "assets/Plant00.png": { x: 36, y: 40, w: 724, h: 712 },
     "assets/StreetLight00.png": { x: 93, y: 6, w: 70, h: 505 },
-    "assets/StreetLight.png": { x: 93, y: 6, w: 70, h: 505 }
+    "assets/StreetLight.png": { x: 93, y: 6, w: 70, h: 505 },
+    "assets/RoadSign00.png": { x: 83, y: 4, w: 90, h: 248 },
+    "assets/RoadSign01.png": { x: 50, y: 11, w: 157, h: 234 },
+    "assets/RoadSign02.png": { x: 58, y: 10, w: 141, h: 232 }
   };
 
   const assets = {};
@@ -156,8 +164,11 @@
         skyline: "#2d2630",
         ground: ["rgba(150,120,100,0.10)", "rgba(230,190,130,0.08)"],
         groundImage: "assets/ground_normal.png",
-        sceneryTypes: ["plant", "roadSign", "roadSign", "tree"],
-        sceneryTarget: 8
+        sceneryTypes: ["plant", "plant", "tree"],
+        sceneryTarget: 6,
+        roadSigns: true,
+        roadSignTarget: 4,
+        roadSignSpacing: 300
       }
     },
     {
@@ -177,8 +188,11 @@
         skyline: "#1d1b2b",
         ground: ["rgba(90,110,150,0.10)", "rgba(230,230,255,0.06)"],
         groundImage: "assets/ground_hard.png",
-        sceneryTypes: ["roadSign", "plant", "roadSign"],
-        sceneryTarget: 5,
+        sceneryTypes: ["plant", "plant"],
+        sceneryTarget: 3,
+        roadSigns: true,
+        roadSignTarget: 3,
+        roadSignSpacing: 360,
         streetLights: true
       }
     }
@@ -201,10 +215,13 @@
   let gamepadCooldown = 0;
   let coinCount = 0;
   let comboCount = 0;
-  let comboTimer = 0;
   let comboPopTimer = 0;
   let comboPopScore = 0;
+  let comboMissTimer = 0;
   let invincibleTimer = 0;
+  let finishLineActive = false;
+  let finishLineY = -100;
+  let goalFlashTimer = 0;
   let audioCtx = null;
 
   let resultData = null;
@@ -235,6 +252,7 @@
   let pickups = [];
   let scenery = [];
   let streetLights = [];
+  let roadSigns = [];
   let particles = [];
   let roadLines = [];
 
@@ -355,7 +373,12 @@
 
   function curveOffsetAt(y) {
     const worldY = road.scroll + H - y;
-    return roadOffsetAtWorld(worldY);
+    const offset = roadOffsetAtWorld(worldY);
+    const remaining = currentStage.clearTime - gameTime;
+    const straightBlend = state === STATES.PLAYING
+      ? smoothStep(clamp((7 - remaining) / 5, 0, 1))
+      : 0;
+    return offset * (1 - straightBlend);
   }
 
   function roadLeftAt(y) {
@@ -383,28 +406,40 @@
     coinTimer = 0.55;
     coinCount = 0;
     comboCount = 0;
-    comboTimer = 0;
     comboPopTimer = 0;
     comboPopScore = 0;
+    comboMissTimer = 0;
     invincibleTimer = 0;
+    finishLineActive = false;
+    finishLineY = -100;
+    goalFlashTimer = 0;
     resetRoadRoute();
 
     obstacles = [];
     pickups = [];
     scenery = [];
     streetLights = [];
+    roadSigns = [];
     particles = [];
     resultData = null;
 
-    const targetScenery = currentStage.theme?.sceneryTarget || 8;
-    for (let i = 0; i < targetScenery; i++) {
-      spawnScenery(-i * 135 - Math.random() * 80);
+    if (currentStage.theme?.roadSigns) {
+      const targetSigns = currentStage.theme.roadSignTarget || 3;
+      const spacing = currentStage.theme.roadSignSpacing || 320;
+      for (let i = 0; i < targetSigns; i++) {
+        spawnRoadSign(-i * spacing - 150, i % 2 === 0 ? 1 : -1);
+      }
     }
 
     if (currentStage.theme?.streetLights) {
       for (let i = 0; i < 5; i++) {
         spawnStreetLight(-i * 260 - 120, i % 2 === 0 ? 1 : -1);
       }
+    }
+
+    const targetScenery = currentStage.theme?.sceneryTarget || 8;
+    for (let i = 0; i < targetScenery; i++) {
+      spawnScenery(-i * 135 - Math.random() * 80);
     }
 
     player.lane = 2;
@@ -441,7 +476,7 @@
     player.targetX = laneCenter(player.lane);
     addParticles(player.x, player.y + 20, "#111", 20);
     comboCount = 0;
-    comboTimer = 0;
+    comboMissTimer = 0.9;
     playSound("oil");
   }
 
@@ -492,6 +527,8 @@
       assetVariant: type === "car" ? randomAssetVariant("car") : 0,
       speedRatio: type === "car" ? 1.02 + Math.random() * 0.28 : 1,
       drift: type === "car" ? (Math.random() - 0.5) * 0.08 : 0,
+      lanePosition: lane,
+      laneChangeCooldown: type === "car" ? 0.7 + Math.random() * 0.8 : 0,
       wheelSpin: Math.random() * Math.PI * 2,
       passed: false,
       remove: false
@@ -544,6 +581,7 @@
       w: 34,
       h: 34,
       remove: false,
+      missed: false,
       spin: Math.random() * Math.PI * 2
     });
   }
@@ -575,12 +613,21 @@
       const yy = y - attempt * 36;
       const side = Math.random() < 0.5 ? -1 : 1;
       const type = chooseSceneryType();
-      const variant = type === "tree" || type === "plant" || type === "light" ? sceneryVariantForType(type) : 0;
+      const assetKey = type === "roadSign" ? "roadSign" : "scenery";
+      const variant = type === "roadSign"
+        ? roadSignVariantForStage()
+        : type === "tree" || type === "plant" || type === "light"
+          ? sceneryVariantForType(type)
+          : 0;
       const isTree = type === "tree";
-      const assetPath = getAsset("scenery", variant)?.path || "";
+      const selectedAsset = getAsset(assetKey, variant);
+      const assetPath = selectedAsset?.path || "";
       const isSmallPlant = assetPath.includes("Plants01");
+      const roadSignH = 64 + Math.random() * 14;
       const displayW = type === "light"
         ? 18 + Math.random() * 6
+        : type === "roadSign"
+          ? roadSignH * ((selectedAsset?.crop?.w || 110) / (selectedAsset?.crop?.h || 240))
         : isTree
           ? 50 + Math.random() * 22
           : isSmallPlant
@@ -588,6 +635,8 @@
             : 34 + Math.random() * 20;
       const displayH = type === "light"
         ? displayW * 7.2
+        : type === "roadSign"
+          ? roadSignH
         : isTree
           ? displayW * 1.12
           : isSmallPlant
@@ -604,11 +653,12 @@
         side,
         margin,
         type,
+        assetKey,
         variant,
         sway: Math.random() * Math.PI * 2
       };
 
-      if (!sceneryOverlaps(item)) {
+      if (!decorationOverlaps(item)) {
         scenery.push(item);
         return true;
       }
@@ -617,28 +667,84 @@
     return false;
   }
 
-  function spawnStreetLight(y = -90, side = Math.random() < 0.5 ? -1 : 1) {
-    const variant = sceneryVariantForType("light");
-    const displayW = 22;
-    const displayH = displayW * 7.2;
-    const roadEdge = side < 0 ? roadLeftAt(y) : roadRightAt(y);
-    const margin = displayW / 2 + 42;
+  function spawnRoadSign(y = -90, side = Math.random() < 0.5 ? -1 : 1) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const yy = y - attempt * 42;
+      const variant = roadSignVariantForStage();
+      const asset = getAsset("roadSign", variant);
+      const displayH = 70;
+      const displayW = displayH * ((asset?.crop?.w || 110) / (asset?.crop?.h || 240));
+      const roadEdge = side < 0 ? roadLeftAt(yy) : roadRightAt(yy);
+      const margin = displayW / 2 + 34;
+      const item = {
+        x: side < 0 ? roadEdge - margin : roadEdge + margin,
+        y: yy,
+        w: displayW,
+        h: displayH,
+        side,
+        margin,
+        type: "roadSign",
+        assetKey: "roadSign",
+        variant
+      };
 
-    streetLights.push({
-      x: side < 0 ? roadEdge - margin : roadEdge + margin,
-      y,
-      w: displayW,
-      h: displayH,
-      side,
-      margin,
-      type: "light",
-      variant
-    });
+      if (!decorationOverlaps(item)) {
+        roadSigns.push(item);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  function spawnStreetLight(y = -90, side = Math.random() < 0.5 ? -1 : 1) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      const yy = y - attempt * 44;
+      const variant = sceneryVariantForType("light");
+      const displayW = 22;
+      const displayH = displayW * 7.2;
+      const roadEdge = side < 0 ? roadLeftAt(yy) : roadRightAt(yy);
+      const margin = displayW / 2 + 42;
+      const item = {
+        x: side < 0 ? roadEdge - margin : roadEdge + margin,
+        y: yy,
+        w: displayW,
+        h: displayH,
+        side,
+        margin,
+        type: "light",
+        variant
+      };
+
+      if (!decorationOverlaps(item)) {
+        streetLights.push(item);
+        return true;
+      }
+    }
+
+    return false;
   }
 
   function chooseSceneryType() {
     const types = currentStage.theme?.sceneryTypes || ["tree", "plant"];
     return types[Math.floor(Math.random() * types.length)];
+  }
+
+  function roadSignVariantForStage() {
+    const list = assets.roadSign || [];
+    const indexes = list
+      .map((asset, index) => {
+        const isMediumOnly = asset.path.includes("RoadSign02");
+        const allowed = currentStage.key === "normal" || !isMediumOnly;
+        return asset.loaded && allowed ? index : -1;
+      })
+      .filter(index => index >= 0);
+
+    if (indexes.length > 0) {
+      return indexes[Math.floor(Math.random() * indexes.length)];
+    }
+
+    return 0;
   }
 
   function sceneryVariantForType(type) {
@@ -664,11 +770,12 @@
     return randomAssetVariant("scenery");
   }
 
-  function sceneryOverlaps(candidate) {
+  function decorationOverlaps(candidate) {
     const padX = 12;
     const padY = 18;
+    const decorations = [...scenery, ...streetLights, ...roadSigns];
 
-    return scenery.some(item => {
+    return decorations.some(item => {
       const sameSide = item.side === candidate.side;
       if (!sameSide) return false;
 
@@ -729,11 +836,29 @@
     if (!clear) {
       addParticles(player.x, player.y, "#ffd166", 26);
     } else {
-      addParticles(player.x, player.y - 40, "#fff36b", 36);
+      addGoalCelebration();
+      goalFlashTimer = 0.65;
     }
 
     playSound(clear ? "clear" : "crash");
     state = STATES.RESULT;
+  }
+
+  function addGoalCelebration() {
+    const colors = ["#fff36b", "#20b7ff", "#ff4b5c", "#65df78", "#ffffff"];
+
+    for (let i = 0; i < 90; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      particles.push({
+        x: W / 2 + side * (70 + Math.random() * 150),
+        y: 120 + Math.random() * 430,
+        vx: -side * (40 + Math.random() * 170),
+        vy: -80 + Math.random() * 220,
+        life: 0.8 + Math.random() * 1.2,
+        size: 4 + Math.random() * 7,
+        color: colors[i % colors.length]
+      });
+    }
   }
 
   function getRankingKey(stageKey) {
@@ -772,6 +897,7 @@
   function update(dt) {
     if (inputCooldown > 0) inputCooldown -= dt;
     if (gamepadCooldown > 0) gamepadCooldown -= dt;
+    if (goalFlashTimer > 0) goalFlashTimer -= dt;
 
     updateGamepad();
 
@@ -785,11 +911,8 @@
     if (player.stunTimer > 0) player.stunTimer -= dt;
     if (player.oilTimer > 0) player.oilTimer -= dt;
     if (invincibleTimer > 0) invincibleTimer -= dt;
-    if (comboTimer > 0) comboTimer -= dt;
     if (comboPopTimer > 0) comboPopTimer -= dt;
-    if (comboTimer <= 0 && comboCount > 0) {
-      comboCount = 0;
-    }
+    if (comboMissTimer > 0) comboMissTimer -= dt;
 
     speed = Math.min(
       currentStage.maxSpeed,
@@ -816,13 +939,23 @@
       }
     }
 
+    if (!finishLineActive && gameTime >= currentStage.clearTime - 1.65) {
+      finishLineActive = true;
+      finishLineY = -80;
+    }
+
+    if (finishLineActive) {
+      finishLineY += speed * dt;
+    }
+
     updateScenery(dt);
     updateStreetLights(dt);
+    updateRoadSigns(dt);
 
     spawnTimer -= dt;
     coinTimer -= dt;
 
-    if (spawnTimer <= 0) {
+    if (spawnTimer <= 0 && gameTime < currentStage.clearTime - 4) {
       spawnObstacle();
 
       if (gameTime > 10 && Math.random() < currentStage.doubleSpawnChance) {
@@ -834,7 +967,7 @@
       spawnTimer = spawnInterval;
     }
 
-    if (coinTimer <= 0) {
+    if (coinTimer <= 0 && gameTime < currentStage.clearTime - 3) {
       spawnCoin();
       coinTimer = coinInterval + Math.random() * 0.35;
     }
@@ -850,7 +983,6 @@
       coin.y += speed * dt;
       coin.x = laneCenter(coin.lane, coin.y);
       coin.spin += dt * 12;
-      keepCoinAwayFromObstacles(coin);
 
       const coinBox = {
         x: coin.x,
@@ -862,10 +994,10 @@
       if (rectsHit(playerBox, coinBox)) {
         coin.remove = true;
         coinCount += 1;
-        comboCount = comboTimer > 0 ? comboCount + 1 : 1;
-        comboTimer = 2.2;
+        comboCount += 1;
         comboPopScore = 100 + Math.max(0, comboCount - 1) * 30;
         comboPopTimer = 0.9;
+        comboMissTimer = 0;
         score += comboPopScore;
         addParticles(coin.x, coin.y, "#fff36b", 16);
         playSound(comboCount >= 2 ? "combo" : "coin");
@@ -873,13 +1005,49 @@
         if (coinCount % 5 === 0) {
           activateInvincible();
         }
+      } else if (!coin.missed && coin.y > player.y + player.h / 2) {
+        coin.missed = true;
+        if (comboCount > 0) {
+          comboCount = 0;
+          comboMissTimer = 1.0;
+          playSound("miss");
+        }
       }
     }
 
     for (const ob of obstacles) {
+      if (ob.type === "car") updateEnemyCarLane(ob, dt);
+
       const itemSpeed = speed * ob.speedRatio;
-      ob.y += itemSpeed * dt;
-      ob.x = laneCenter(ob.lane, ob.y) + ob.drift * laneWidth();
+      let nextY = ob.y + itemSpeed * dt;
+
+      if (ob.type === "car") {
+        const frontCar = obstacles
+          .filter(other => (
+            other !== ob &&
+            !other.remove &&
+            other.type === "car" &&
+            other.y > ob.y &&
+            Math.abs((other.lanePosition ?? other.lane) - ob.lane) < 0.45
+          ))
+          .sort((a, b) => a.y - b.y)[0];
+
+        if (frontCar) {
+          const minGap = (ob.h + frontCar.h) / 2 + 30;
+          const limitY = frontCar.y - minGap;
+          nextY = Math.max(ob.y, Math.min(nextY, limitY));
+        }
+      }
+
+      ob.y = nextY;
+
+      if (ob.type === "car") {
+        ob.lanePosition += (ob.lane - ob.lanePosition) * Math.min(1, dt * 4.2);
+        ob.x = laneCenter(ob.lanePosition, ob.y) + ob.drift * laneWidth();
+      } else {
+        ob.x = laneCenter(ob.lane, ob.y);
+      }
+
       ob.wheelSpin += itemSpeed * dt * 0.035;
 
       if (!ob.passed && ob.y > player.y) {
@@ -894,7 +1062,8 @@
         h: ob.h * 0.75
       };
 
-      if (ob.lane === player.lane && rectsHit(playerBox, obstacleBox)) {
+      const obstacleLane = ob.type === "car" ? ob.lanePosition : ob.lane;
+      if (Math.abs(obstacleLane - player.lane) < 0.45 && rectsHit(playerBox, obstacleBox)) {
         if (invincibleTimer > 0) {
           ob.remove = true;
           score += 60;
@@ -915,23 +1084,11 @@
 
     updateParticles(dt);
 
-    if (gameTime >= currentStage.clearTime && state === STATES.PLAYING) {
+    if (finishLineActive && finishLineY >= player.y - 8 && state === STATES.PLAYING) {
+      finishLineActive = false;
       finishGame(true);
-    }
-  }
-
-  function keepCoinAwayFromObstacles(coin) {
-    for (const ob of obstacles) {
-      if (Math.abs(ob.lane - coin.lane) > 0) continue;
-
-      const minGap = (ob.h + coin.h) / 2 + 18;
-      const gap = Math.abs(ob.y - coin.y);
-
-      if (gap < minGap) {
-        const direction = coin.y < ob.y ? -1 : 1;
-        coin.y = ob.y + direction * minGap;
-        coin.x = laneCenter(coin.lane, coin.y);
-      }
+    } else if (gameTime >= currentStage.clearTime + 3 && state === STATES.PLAYING) {
+      finishGame(true);
     }
   }
 
@@ -955,6 +1112,51 @@
     }
   }
 
+  function updateEnemyCarLane(car, dt) {
+    car.laneChangeCooldown = Math.max(0, car.laneChangeCooldown - dt);
+    if (car.laneChangeCooldown > 0) return;
+
+    const hazard = obstacles
+      .filter(other => (
+        other !== car &&
+        !other.remove &&
+        other.type !== "car" &&
+        other.lane === car.lane &&
+        other.y > car.y &&
+        other.y - car.y < 190
+      ))
+      .sort((a, b) => a.y - b.y)[0];
+
+    if (!hazard) return;
+
+    const candidates = Math.random() < 0.5
+      ? [car.lane - 1, car.lane + 1]
+      : [car.lane + 1, car.lane - 1];
+
+    const nextLane = candidates.find(lane => {
+      if (lane < 0 || lane >= road.lanes) return false;
+      if (car.y > player.y - 260 && lane === player.lane) return false;
+
+      return !obstacles.some(other => (
+        other !== car &&
+        !other.remove &&
+        (
+          other.lane === lane ||
+          (other.type === "car" && Math.abs((other.lanePosition ?? other.lane) - lane) < 0.6)
+        ) &&
+        Math.abs(other.y - car.y) < 155
+      ));
+    });
+
+    if (nextLane === undefined) {
+      car.laneChangeCooldown = 0.35;
+      return;
+    }
+
+    car.lane = nextLane;
+    car.laneChangeCooldown = 1.1;
+  }
+
   function updateStreetLights(dt) {
     if (!currentStage.theme?.streetLights) return;
 
@@ -970,6 +1172,28 @@
     while (streetLights.length < 5 && attempts < 10) {
       const topLight = streetLights.reduce((top, light) => light.y < top.y ? light : top, streetLights[0] || { y: 0, side: 1 });
       spawnStreetLight(topLight.y - 260, -topLight.side);
+      attempts++;
+    }
+  }
+
+  function updateRoadSigns(dt) {
+    if (!currentStage.theme?.roadSigns) return;
+
+    for (const sign of roadSigns) {
+      sign.y += speed * dt;
+      const roadEdge = sign.side < 0 ? roadLeftAt(sign.y) : roadRightAt(sign.y);
+      sign.x = sign.side < 0 ? roadEdge - sign.margin : roadEdge + sign.margin;
+    }
+
+    roadSigns = roadSigns.filter(sign => sign.y < H + 120);
+
+    const target = currentStage.theme.roadSignTarget || 3;
+    const spacing = currentStage.theme.roadSignSpacing || 320;
+    let attempts = 0;
+
+    while (roadSigns.length < target && attempts < 10) {
+      const topSign = roadSigns.reduce((top, sign) => sign.y < top.y ? sign : top, roadSigns[0] || { y: 0, side: 1 });
+      spawnRoadSign(topSign.y - spacing, -topSign.side);
       attempts++;
     }
   }
@@ -1069,8 +1293,10 @@
 
     drawBackground();
     drawRoad();
+    drawFinishLine();
     drawScenery();
     drawStreetLights();
+    drawRoadSigns();
     drawPickups();
     drawObstacles();
 
@@ -1084,6 +1310,17 @@
     if (state === STATES.MENU) drawMenu();
     if (state === STATES.RANKING) drawRanking();
     if (state === STATES.RESULT) drawResult();
+    drawGoalFlash();
+  }
+
+  function drawGoalFlash() {
+    if (goalFlashTimer <= 0) return;
+
+    ctx.save();
+    ctx.globalAlpha = Math.min(0.55, goalFlashTimer * 0.9);
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
   }
 
   function drawBackground() {
@@ -1152,15 +1389,39 @@
     }
   }
 
+  function drawFinishLine() {
+    if (!finishLineActive) return;
+
+    const y = finishLineY;
+    const left = roadLeftAt(y);
+    const width = roadWidth();
+    const cellW = 20;
+    const cellH = 12;
+    const columns = Math.ceil(width / cellW);
+
+    ctx.save();
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(left, y - cellH, width, cellH * 2);
+
+    for (let row = 0; row < 2; row++) {
+      for (let col = 0; col < columns; col++) {
+        if ((row + col) % 2 === 0) {
+          ctx.fillStyle = "#111111";
+          ctx.fillRect(left + col * cellW, y - cellH + row * cellH, cellW, cellH);
+        }
+      }
+    }
+
+    ctx.strokeStyle = "#fff36b";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(left, y - cellH - 2, width, cellH * 2 + 4);
+    ctx.restore();
+  }
+
   function drawScenery() {
     for (const item of scenery) {
-      if (item.type === "roadSign") {
-        drawSceneryFallback(item);
-        continue;
-      }
-
       drawImageOrFallback(
-        "scenery",
+        item.assetKey || "scenery",
         item.x,
         item.y,
         item.w,
@@ -1181,6 +1442,20 @@
         light.h,
         () => drawSceneryFallback(light),
         light.variant
+      );
+    }
+  }
+
+  function drawRoadSigns() {
+    for (const sign of roadSigns) {
+      drawImageOrFallback(
+        "roadSign",
+        sign.x,
+        sign.y,
+        sign.w,
+        sign.h,
+        () => drawSceneryFallback(sign),
+        sign.variant
       );
     }
   }
@@ -1620,6 +1895,13 @@
       ctx.fillText(`+${comboPopScore}`, W / 2, 262);
     }
 
+    if (comboMissTimer > 0) {
+      ctx.textAlign = "center";
+      ctx.fillStyle = "#ff6b6b";
+      ctx.font = "bold 26px sans-serif";
+      ctx.fillText("COMBO RESET", W / 2, 235);
+    }
+
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.font = "13px sans-serif";
     ctx.textAlign = "center";
@@ -1732,6 +2014,11 @@
     ctx.font = "bold 42px monospace";
     ctx.fillText(resultData.clear ? "STAGE CLEAR!" : "CRASH!", W / 2, 195);
 
+    if (resultData.clear) {
+      drawResultCheckers(152);
+      drawResultCheckers(410);
+    }
+
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 26px monospace";
     ctx.fillText(`SCORE ${resultData.score}`, W / 2, 265);
@@ -1753,6 +2040,17 @@
     drawButton(95, 455, 290, 54, "もう一度");
     drawButton(95, 530, 290, 50, "ランキング");
     drawButton(95, 600, 290, 50, "メニューへ");
+  }
+
+  function drawResultCheckers(y) {
+    const cell = 16;
+    const startX = 48;
+    const count = 24;
+
+    for (let i = 0; i < count; i++) {
+      ctx.fillStyle = i % 2 === 0 ? "#ffffff" : "#111111";
+      ctx.fillRect(startX + i * cell, y, cell, 10);
+    }
   }
 
   function drawButton(x, y, w, h, text) {
@@ -1831,6 +2129,12 @@
       endFreq = 260;
       duration = 0.055;
       volume = 0.025;
+    } else if (type === "miss") {
+      startFreq = 260;
+      endFreq = 120;
+      duration = 0.18;
+      wave = "square";
+      volume = 0.04;
     } else if (type === "oil") {
       startFreq = 180;
       endFreq = 90;
