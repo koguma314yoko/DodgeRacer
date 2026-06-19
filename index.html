@@ -87,7 +87,7 @@
     "assets/oil.png": { x: 15, y: 38, w: 226, h: 184 },
     "assets/barrier.png": { x: 27, y: 67, w: 202, h: 117 },
     "assets/Tree00.png": { x: 20, y: 14, w: 215, h: 229 },
-    "assets/Plants00.png": { x: 36, y: 40, w: 724, h: 712 },
+    "assets/Plants00.png": { x: 11, y: 12, w: 235, h: 231 },
     "assets/Plants01.png": { x: 6, y: 27, w: 116, h: 72 },
     "assets/Plant00.png": { x: 36, y: 40, w: 724, h: 712 },
     "assets/StreetLight00.png": { x: 93, y: 6, w: 70, h: 505 },
@@ -244,6 +244,7 @@
     w: 52,
     h: 102,
     targetX: 0,
+    angle: 0,
     stunTimer: 0,
     oilTimer: 0
   };
@@ -393,6 +394,14 @@
     return roadLeftAt(y) + laneWidth() * lane + laneWidth() / 2;
   }
 
+  function roadHeadingAt(y) {
+    const aheadY = clamp(y - 26, 0, H);
+    const behindY = clamp(y + 26, 0, H);
+    const dx = curveOffsetAt(aheadY) - curveOffsetAt(behindY);
+    const dy = Math.max(1, behindY - aheadY);
+    return clamp(Math.atan2(dx, dy), -0.28, 0.28);
+  }
+
   function resetGame() {
     currentStage = STAGES[stageIndex];
 
@@ -445,6 +454,7 @@
     player.lane = 2;
     player.x = laneCenter(player.lane);
     player.targetX = player.x;
+    player.angle = roadHeadingAt(player.y);
     player.stunTimer = 0;
     player.oilTimer = 0;
 
@@ -529,6 +539,7 @@
       drift: type === "car" ? (Math.random() - 0.5) * 0.08 : 0,
       lanePosition: lane,
       laneChangeCooldown: type === "car" ? 0.7 + Math.random() * 0.8 : 0,
+      angle: 0,
       wheelSpin: Math.random() * Math.PI * 2,
       passed: false,
       remove: false
@@ -623,6 +634,7 @@
       const selectedAsset = getAsset(assetKey, variant);
       const assetPath = selectedAsset?.path || "";
       const isSmallPlant = assetPath.includes("Plants01");
+      const isLargePlant = assetPath.includes("Plants00");
       const roadSignH = 64 + Math.random() * 14;
       const displayW = type === "light"
         ? 18 + Math.random() * 6
@@ -630,6 +642,8 @@
           ? roadSignH * ((selectedAsset?.crop?.w || 110) / (selectedAsset?.crop?.h || 240))
         : isTree
           ? 50 + Math.random() * 22
+          : isLargePlant
+            ? 52 + Math.random() * 22
           : isSmallPlant
             ? 40 + Math.random() * 18
             : 34 + Math.random() * 20;
@@ -639,6 +653,8 @@
           ? roadSignH
         : isTree
           ? displayW * 1.12
+          : isLargePlant
+            ? displayW * (231 / 235)
           : isSmallPlant
             ? displayW * 0.62
             : displayW;
@@ -931,6 +947,9 @@
 
     player.targetX = laneCenter(player.lane);
     player.x += (player.targetX - player.x) * Math.min(1, dt * 13);
+    const playerSteer = clamp((player.targetX - player.x) * 0.006, -0.16, 0.16);
+    const playerTargetAngle = roadHeadingAt(player.y) + playerSteer;
+    player.angle += (playerTargetAngle - player.angle) * Math.min(1, dt * 7);
 
     for (const line of roadLines) {
       line.y += speed * dt;
@@ -1044,6 +1063,9 @@
       if (ob.type === "car") {
         ob.lanePosition += (ob.lane - ob.lanePosition) * Math.min(1, dt * 4.2);
         ob.x = laneCenter(ob.lanePosition, ob.y) + ob.drift * laneWidth();
+        const laneSteer = clamp((ob.lane - ob.lanePosition) * 0.2, -0.18, 0.18);
+        const targetAngle = roadHeadingAt(ob.y) + laneSteer;
+        ob.angle += (targetAngle - ob.angle) * Math.min(1, dt * 6);
       } else {
         ob.x = laneCenter(ob.lane, ob.y);
       }
@@ -1606,7 +1628,9 @@
         ctx.fillRect(player.w / 2 - 16, -player.h / 2 + 3, 10, 8);
 
         ctx.restore();
-      }
+      },
+      0,
+      player.angle
     );
   }
 
@@ -1621,7 +1645,7 @@
   function drawObstacles() {
     for (const ob of obstacles) {
       if (ob.type === "car") {
-        drawImageOrFallback("car", ob.x, ob.y, ob.w, ob.h, () => drawEnemyCar(ob), ob.assetVariant);
+        drawImageOrFallback("car", ob.x, ob.y, ob.w, ob.h, () => drawEnemyCar(ob), ob.assetVariant, ob.angle);
       }
 
       if (ob.type === "cone") {
@@ -1664,10 +1688,14 @@
     return list.find(asset => asset.path === path && asset.loaded) || null;
   }
 
-  function drawImageOrFallback(key, x, y, w, h, fallback, variant = 0) {
+  function drawImageOrFallback(key, x, y, w, h, fallback, variant = 0, angle = 0) {
     const asset = getAsset(key, variant);
 
     if (asset) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+
       if (asset.crop) {
         ctx.drawImage(
           asset.img,
@@ -1675,14 +1703,22 @@
           asset.crop.y,
           asset.crop.w,
           asset.crop.h,
-          x - w / 2,
-          y - h / 2,
+          -w / 2,
+          -h / 2,
           w,
           h
         );
       } else {
-        ctx.drawImage(asset.img, x - w / 2, y - h / 2, w, h);
+        ctx.drawImage(asset.img, -w / 2, -h / 2, w, h);
       }
+      ctx.restore();
+    } else if (angle !== 0) {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(angle);
+      ctx.translate(-x, -y);
+      fallback();
+      ctx.restore();
     } else {
       fallback();
     }
