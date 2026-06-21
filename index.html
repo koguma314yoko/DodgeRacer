@@ -535,7 +535,7 @@
       h,
       type,
       assetVariant: type === "car" ? randomAssetVariant("car") : 0,
-      speedRatio: type === "car" ? 1.02 + Math.random() * 0.28 : 1,
+      speedRatio: type === "car" ? 0.56 + Math.random() * 0.28 : 1,
       drift: type === "car" ? (Math.random() - 0.5) * 0.08 : 0,
       lanePosition: lane,
       laneChangeCooldown: type === "car" ? 0.7 + Math.random() * 0.8 : 0,
@@ -1038,27 +1038,7 @@
       if (ob.type === "car") updateEnemyCarLane(ob, dt);
 
       const itemSpeed = speed * ob.speedRatio;
-      let nextY = ob.y + itemSpeed * dt;
-
-      if (ob.type === "car") {
-        const frontCar = obstacles
-          .filter(other => (
-            other !== ob &&
-            !other.remove &&
-            other.type === "car" &&
-            other.y > ob.y &&
-            Math.abs((other.lanePosition ?? other.lane) - ob.lane) < 0.45
-          ))
-          .sort((a, b) => a.y - b.y)[0];
-
-        if (frontCar) {
-          const minGap = (ob.h + frontCar.h) / 2 + 30;
-          const limitY = frontCar.y - minGap;
-          nextY = Math.max(ob.y, Math.min(nextY, limitY));
-        }
-      }
-
-      ob.y = nextY;
+      ob.y += itemSpeed * dt;
 
       if (ob.type === "car") {
         ob.lanePosition += (ob.lane - ob.lanePosition) * Math.min(1, dt * 4.2);
@@ -1100,6 +1080,8 @@
         }
       }
     }
+
+    separateEnemyCarsForward();
 
     pickups = pickups.filter(item => item.y < H + 100 && !item.remove);
     obstacles = obstacles.filter(ob => ob.y < H + 120 && !ob.remove);
@@ -1144,10 +1126,10 @@
         !other.remove &&
         other.type !== "car" &&
         other.lane === car.lane &&
-        other.y > car.y &&
-        other.y - car.y < 190
+        other.y < car.y &&
+        car.y - other.y < 190
       ))
-      .sort((a, b) => a.y - b.y)[0];
+      .sort((a, b) => b.y - a.y)[0];
 
     if (!hazard) return;
 
@@ -1177,6 +1159,30 @@
 
     car.lane = nextLane;
     car.laneChangeCooldown = 1.1;
+  }
+
+  function separateEnemyCarsForward() {
+    for (let lane = 0; lane < road.lanes; lane++) {
+      const cars = obstacles
+        .filter(ob => (
+          !ob.remove &&
+          ob.type === "car" &&
+          Math.abs((ob.lanePosition ?? ob.lane) - lane) < 0.45
+        ))
+        .sort((a, b) => b.y - a.y);
+
+      for (let i = 1; i < cars.length; i++) {
+        const back = cars[i - 1];
+        const front = cars[i];
+        const minGap = (back.h + front.h) / 2 + 28;
+
+        if (back.y - front.y < minGap) {
+          front.y = back.y - minGap;
+          front.x = laneCenter(front.lanePosition, front.y) + front.drift * laneWidth();
+          front.angle = roadHeadingAt(front.y);
+        }
+      }
+    }
   }
 
   function updateStreetLights(dt) {
