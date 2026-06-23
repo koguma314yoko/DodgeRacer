@@ -46,6 +46,8 @@
   const H = 800;
 
   const ASSET_PATHS = {
+    title: "assets/TitleScreen.png",
+    titleLogo: "assets/TitleLogo.png",
     player: "assets/player_car.png",
     car: [
       "assets/enemy_car00.png",
@@ -134,6 +136,7 @@
   const STAGES = [
     {
       name: "初級",
+      nameEn: "Easy",
       key: "easy",
       speed: 280,
       maxSpeed: 540,
@@ -155,6 +158,7 @@
     },
     {
       name: "中級",
+      nameEn: "Normal",
       key: "normal",
       speed: 340,
       maxSpeed: 650,
@@ -179,6 +183,7 @@
     },
     {
       name: "上級",
+      nameEn: "Hard",
       key: "hard",
       speed: 400,
       maxSpeed: 760,
@@ -204,10 +209,98 @@
     }
   ];
 
+  const TEXT = {
+    ja: {
+      menuLead1: "カーブするコースで障害物をよけて走り切ろう",
+      menuLead2: "コイン5枚ごとに無敵が発動",
+      stageSelect: "ステージ選択",
+      ranking: "ランキング",
+      settings: "設定",
+      howTo: "遊び方",
+      menuHint: "左右: ステージ / 上下: メニュー / Enter: 決定",
+      score: "SCORE",
+      clearIn: "CLEARまで",
+      sec: "秒",
+      invincible: "無敵",
+      oilSlip: "オイルで少し操作不能!",
+      controlHint: "SWIPE / ← → / A D / GAMEPAD",
+      sound: "効果音",
+      language: "言語",
+      soundOn: "SOUND ON",
+      soundOff: "SOUND OFF",
+      langValue: "日本語",
+      settingsHint: "上下で選択 / 決定で切り替え",
+      backMenu: "メニューへ戻る",
+      controls: "操作",
+      controls1: "左右スワイプ / ← → / A D / ゲームパッド",
+      controls2: "車線を移動して障害物をよけます",
+      coins: "コイン",
+      coins1: "取るとスコアアップ",
+      coins2: "順番に取り続けるとコンボボーナス",
+      coins3: "取り逃すとコンボリセット",
+      coins4: "5枚ごとに5秒間の無敵が発動",
+      goal: "ゴール",
+      goal1: "制限時間を走り切り、ゴールラインを通過",
+      goal2: "敵車・コーン・バリアに当たるとクラッシュ",
+      goal3: "オイルに乗るとスリップします",
+      noRecords: "まだ記録がありません",
+      stageSwitchHint: "左右キーでステージ切替",
+      stage: "ステージ",
+      rankIn: "ランキング",
+      rankSuffix: "位 入賞!",
+      noRank: "ランキング圏外",
+      retry: "もう一度",
+      menu: "メニューへ"
+    },
+    en: {
+      menuLead1: "Dodge obstacles through straights and curves",
+      menuLead2: "Every 5 coins triggers invincibility",
+      stageSelect: "Stage Select",
+      ranking: "Ranking",
+      settings: "Settings",
+      howTo: "How To Play",
+      menuHint: "Left/Right: Stage / Up/Down: Menu / Enter: OK",
+      score: "SCORE",
+      clearIn: "CLEAR IN",
+      sec: "s",
+      invincible: "INVINCIBLE",
+      oilSlip: "Oil slick! Controls are locked briefly",
+      controlHint: "SWIPE / ← → / A D / GAMEPAD",
+      sound: "Sound",
+      language: "Language",
+      soundOn: "SOUND ON",
+      soundOff: "SOUND OFF",
+      langValue: "English",
+      settingsHint: "Up/Down: Select / Enter: Change",
+      backMenu: "Back to Menu",
+      controls: "Controls",
+      controls1: "Swipe / ← → / A D / Gamepad",
+      controls2: "Change lanes to dodge obstacles",
+      coins: "Coins",
+      coins1: "Collect coins to raise your score",
+      coins2: "Collect them in order for combo bonuses",
+      coins3: "Missing one resets the combo",
+      coins4: "Every 5 coins gives 5 seconds of invincibility",
+      goal: "Goal",
+      goal1: "Survive the timer and cross the finish line",
+      goal2: "Enemy cars, cones, and barriers cause crashes",
+      goal3: "Oil slicks make your car slip",
+      noRecords: "No records yet",
+      stageSwitchHint: "Left/Right: Switch stage",
+      stage: "Stage",
+      rankIn: "Ranked #",
+      rankSuffix: "!",
+      noRank: "Not ranked",
+      retry: "Retry",
+      menu: "Menu"
+    }
+  };
+
   let dpr = 1;
   let state = STATES.MENU;
   let stageIndex = 0;
   let menuActionIndex = 0;
+  let settingsActionIndex = 0;
   let currentStage = STAGES[0];
 
   let lastTime = 0;
@@ -230,6 +323,7 @@
   let finishLineY = -100;
   let goalFlashTimer = 0;
   let soundEnabled = loadSoundSetting();
+  let language = loadLanguageSetting();
   let audioCtx = null;
 
   let resultData = null;
@@ -918,6 +1012,14 @@
     return `${y}/${m}/${d}`;
   }
 
+  function t(key) {
+    return (TEXT[language] && TEXT[language][key]) || TEXT.ja[key] || key;
+  }
+
+  function stageName(stage) {
+    return language === "en" ? stage.nameEn : stage.name;
+  }
+
   function update(dt) {
     if (inputCooldown > 0) inputCooldown -= dt;
     if (gamepadCooldown > 0) gamepadCooldown -= dt;
@@ -1126,20 +1228,20 @@
 
   function updateEnemyCarLane(car, dt) {
     car.laneChangeCooldown = Math.max(0, car.laneChangeCooldown - dt);
-    if (car.laneChangeCooldown > 0) return;
 
     const hazard = obstacles
       .filter(other => (
         other !== car &&
         !other.remove &&
         other.type !== "car" &&
-        other.lane === car.lane &&
+        enemyCarShouldAvoid(car, other) &&
         other.y < car.y &&
-        car.y - other.y < 190
+        car.y - other.y < 260
       ))
       .sort((a, b) => b.y - a.y)[0];
 
     if (!hazard) return;
+    if (car.laneChangeCooldown > 0 && car.y - hazard.y > 115) return;
 
     const candidates = Math.random() < 0.5
       ? [car.lane - 1, car.lane + 1]
@@ -1147,17 +1249,9 @@
 
     const nextLane = candidates.find(lane => {
       if (lane < 0 || lane >= road.lanes) return false;
-      if (car.y > player.y - 260 && lane === player.lane) return false;
+      if (lane === player.lane && Math.abs(car.y - player.y) < 120) return false;
 
-      return !obstacles.some(other => (
-        other !== car &&
-        !other.remove &&
-        (
-          other.lane === lane ||
-          (other.type === "car" && Math.abs((other.lanePosition ?? other.lane) - lane) < 0.6)
-        ) &&
-        Math.abs(other.y - car.y) < 155
-      ));
+      return !laneBlockedForEnemy(car, lane);
     });
 
     if (nextLane === undefined) {
@@ -1167,6 +1261,24 @@
 
     car.lane = nextLane;
     car.laneChangeCooldown = 1.1;
+  }
+
+  function enemyCarShouldAvoid(car, other) {
+    const carLane = car.lanePosition ?? car.lane;
+    return other.lane === car.lane || Math.abs(other.lane - carLane) < 0.65;
+  }
+
+  function laneBlockedForEnemy(car, lane) {
+    return obstacles.some(other => {
+      if (other === car || other.remove) return false;
+
+      const otherLane = other.type === "car" ? (other.lanePosition ?? other.lane) : other.lane;
+      if (Math.abs(otherLane - lane) >= 0.62) return false;
+
+      const forwardGap = car.y - other.y;
+      if (forwardGap > 0 && forwardGap < 230) return true;
+      return Math.abs(other.y - car.y) < 135;
+    });
   }
 
   function separateEnemyCarsForward() {
@@ -1249,7 +1361,10 @@
   function activateMenuAction() {
     if (menuActionIndex === 0) resetGame();
     if (menuActionIndex === 1) state = STATES.RANKING;
-    if (menuActionIndex === 2) state = STATES.SETTINGS;
+    if (menuActionIndex === 2) {
+      settingsActionIndex = 0;
+      state = STATES.SETTINGS;
+    }
     if (menuActionIndex === 3) state = STATES.HOW_TO;
   }
 
@@ -1332,8 +1447,18 @@
     }
 
     if (state === STATES.SETTINGS) {
+      if (up) {
+        settingsActionIndex = (settingsActionIndex + 2) % 3;
+        gamepadCooldown = 0.25;
+      }
+
+      if (down) {
+        settingsActionIndex = (settingsActionIndex + 1) % 3;
+        gamepadCooldown = 0.25;
+      }
+
       if (decide) {
-        toggleSound();
+        activateSettingsAction();
         gamepadCooldown = 0.25;
       }
 
@@ -1764,6 +1889,20 @@
     return list.find(asset => asset.path === path && asset.loaded) || null;
   }
 
+  function drawCoverImage(asset, x, y, w, h) {
+    const scale = Math.max(w / asset.img.width, h / asset.img.height);
+    const drawW = asset.img.width * scale;
+    const drawH = asset.img.height * scale;
+    ctx.drawImage(asset.img, x + (w - drawW) / 2, y + (h - drawH) / 2, drawW, drawH);
+  }
+
+  function drawContainImage(asset, x, y, w, h) {
+    const scale = Math.min(w / asset.img.width, h / asset.img.height);
+    const drawW = asset.img.width * scale;
+    const drawH = asset.img.height * scale;
+    ctx.drawImage(asset.img, x + (w - drawW) / 2, y + (h - drawH) / 2, drawW, drawH);
+  }
+
   function drawImageOrFallback(key, x, y, w, h, fallback, variant = 0, angle = 0) {
     const asset = getAsset(key, variant);
 
@@ -1957,11 +2096,11 @@
     ctx.fillText(`SCORE ${Math.floor(score)}`, 32, 48);
 
     ctx.font = "15px sans-serif";
-    ctx.fillText(`STAGE ${currentStage.name}`, 32, 73);
+    ctx.fillText(`${t("stage").toUpperCase()} ${stageName(currentStage)}`, 32, 73);
 
     const remain = Math.max(0, Math.ceil(currentStage.clearTime - gameTime));
     const coinsToInvincible = 5 - (coinCount % 5 || 0);
-    ctx.fillText(`CLEARまで ${remain}秒`, 32, 96);
+    ctx.fillText(`${t("clearIn")} ${remain}${t("sec")}`, 32, 96);
     ctx.fillText(`COIN ${coinCount} / NEXT ${coinsToInvincible}`, 32, 119);
 
     let uiY = 142;
@@ -1975,7 +2114,7 @@
     if (invincibleTimer > 0) {
       ctx.fillStyle = "#fff36b";
       ctx.font = "bold 15px sans-serif";
-      ctx.fillText(`無敵 ${Math.ceil(invincibleTimer)}秒`, 32, uiY);
+      ctx.fillText(`${t("invincible")} ${Math.ceil(invincibleTimer)}${t("sec")}`, 32, uiY);
     }
 
     if (player.stunTimer > 0) {
@@ -1986,7 +2125,7 @@
 
       ctx.fillStyle = "#ffffff";
       ctx.font = "16px sans-serif";
-      ctx.fillText("オイルで少し操作不能!", W / 2, 220);
+      ctx.fillText(t("oilSlip"), W / 2, 220);
     }
 
     if (invincibleTimer > 0) {
@@ -2017,30 +2156,41 @@
     ctx.fillStyle = "rgba(255,255,255,0.8)";
     ctx.font = "13px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("SWIPE / ← → / A D / GAMEPAD", W / 2, H - 30);
+    ctx.fillText(t("controlHint"), W / 2, H - 30);
   }
 
   function drawMenu() {
-    ctx.fillStyle = "rgba(0,0,0,0.68)";
-    ctx.fillRect(0, 0, W, H);
+    const titleAsset = getAsset("title");
+    if (titleAsset) {
+      drawCoverImage(titleAsset, 0, 0, W, H);
+      const grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, "rgba(0,0,0,0.00)");
+      grad.addColorStop(0.55, "rgba(0,0,0,0.04)");
+      grad.addColorStop(1, "rgba(0,0,0,0.34)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    } else {
+      ctx.fillStyle = "rgba(0,0,0,0.68)";
+      ctx.fillRect(0, 0, W, H);
+    }
 
     ctx.textAlign = "center";
 
-    ctx.fillStyle = "#fff36b";
-    ctx.font = "bold 38px monospace";
-    ctx.fillText("RETRO", W / 2, 72);
-    ctx.fillText("DODGE RACER", W / 2, 115);
+    const logoAsset = getAsset("titleLogo");
+    if (logoAsset) {
+      drawContainImage(logoAsset, 45, 48, 390, 195);
+    }
 
     ctx.fillStyle = "#fff";
     ctx.font = "15px sans-serif";
-    ctx.fillText("カーブするコースで障害物をよけて走り切ろう", W / 2, 153);
-    ctx.fillText("コイン5枚ごとに無敵が発動", W / 2, 178);
+    ctx.fillText(t("menuLead1"), W / 2, 326);
+    ctx.fillText(t("menuLead2"), W / 2, 350);
 
     ctx.font = "bold 18px sans-serif";
-    ctx.fillText("ステージ選択", W / 2, 220);
+    ctx.fillText(t("stageSelect"), W / 2, 390);
 
     for (let i = 0; i < STAGES.length; i++) {
-      const y = 242 + i * 52;
+      const y = 412 + i * 48;
       const selected = i === stageIndex;
 
       ctx.fillStyle = selected ? "#20b7ff" : "rgba(255,255,255,0.18)";
@@ -2049,17 +2199,17 @@
 
       ctx.fillStyle = selected ? "#00151f" : "#ffffff";
       ctx.font = "bold 20px sans-serif";
-      ctx.fillText(STAGES[i].name, W / 2, y + 28);
+      ctx.fillText(stageName(STAGES[i]), W / 2, y + 28);
     }
 
-    drawButton(95, 420, 290, 52, "START", menuActionIndex === 0);
-    drawButton(95, 488, 290, 46, "ランキング", menuActionIndex === 1);
-    drawButton(95, 546, 290, 46, "設定", menuActionIndex === 2);
-    drawButton(95, 604, 290, 46, "遊び方", menuActionIndex === 3);
+    drawButton(95, 570, 290, 52, "START", menuActionIndex === 0);
+    drawButton(95, 636, 290, 42, t("ranking"), menuActionIndex === 1);
+    drawButton(95, 690, 138, 42, t("settings"), menuActionIndex === 2);
+    drawButton(247, 690, 138, 42, t("howTo"), menuActionIndex === 3);
 
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     ctx.font = "13px sans-serif";
-    ctx.fillText("左右: ステージ / 上下: メニュー / Enter: 決定", W / 2, 705);
+    ctx.fillText(t("menuHint"), W / 2, 760);
   }
 
   function drawSettings() {
@@ -2069,25 +2219,37 @@
     ctx.textAlign = "center";
     ctx.fillStyle = "#fff36b";
     ctx.font = "bold 36px sans-serif";
-    ctx.fillText("設定", W / 2, 120);
+    ctx.fillText(t("settings"), W / 2, 110);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 20px sans-serif";
-    ctx.fillText("効果音", W / 2, 250);
+    ctx.fillText(t("sound"), W / 2, 205);
 
-    ctx.fillStyle = soundEnabled ? "#65df78" : "#ff6b6b";
-    roundRect(120, 285, 240, 66, 8);
+    ctx.fillStyle = settingsActionIndex === 0 ? "#fff36b" : (soundEnabled ? "#65df78" : "#ff6b6b");
+    roundRect(120, 232, 240, 62, 8);
     ctx.fill();
 
     ctx.fillStyle = "#101018";
     ctx.font = "bold 25px monospace";
-    ctx.fillText(soundEnabled ? "SOUND ON" : "SOUND OFF", W / 2, 328);
+    ctx.fillText(soundEnabled ? t("soundOn") : t("soundOff"), W / 2, 272);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 20px sans-serif";
+    ctx.fillText(t("language"), W / 2, 358);
+
+    ctx.fillStyle = settingsActionIndex === 1 ? "#fff36b" : "#20b7ff";
+    roundRect(120, 385, 240, 62, 8);
+    ctx.fill();
+
+    ctx.fillStyle = "#101018";
+    ctx.font = "bold 25px monospace";
+    ctx.fillText(t("langValue"), W / 2, 425);
 
     ctx.fillStyle = "rgba(255,255,255,0.72)";
     ctx.font = "14px sans-serif";
-    ctx.fillText("ボタンを押すと切り替わります", W / 2, 390);
+    ctx.fillText(t("settingsHint"), W / 2, 500);
 
-    drawButton(95, 650, 290, 52, "メニューへ戻る");
+    drawButton(95, 650, 290, 52, t("backMenu"), settingsActionIndex === 2);
   }
 
   function drawHowTo() {
@@ -2097,27 +2259,27 @@
     ctx.textAlign = "center";
     ctx.fillStyle = "#fff36b";
     ctx.font = "bold 34px sans-serif";
-    ctx.fillText("遊び方", W / 2, 88);
+    ctx.fillText(t("howTo"), W / 2, 88);
 
-    drawHowToSection("操作", 145, [
-      "左右スワイプ / ← → / A D / ゲームパッド",
-      "車線を移動して障害物をよけます"
+    drawHowToSection(t("controls"), 145, [
+      t("controls1"),
+      t("controls2")
     ]);
 
-    drawHowToSection("コイン", 265, [
-      "取るとスコアアップ",
-      "順番に取り続けるとコンボボーナス",
-      "取り逃すとコンボリセット",
-      "5枚ごとに5秒間の無敵が発動"
+    drawHowToSection(t("coins"), 265, [
+      t("coins1"),
+      t("coins2"),
+      t("coins3"),
+      t("coins4")
     ]);
 
-    drawHowToSection("ゴール", 475, [
-      "制限時間を走り切り、ゴールラインを通過",
-      "敵車・コーン・バリアに当たるとクラッシュ",
-      "オイルに乗るとスリップします"
+    drawHowToSection(t("goal"), 475, [
+      t("goal1"),
+      t("goal2"),
+      t("goal3")
     ]);
 
-    drawButton(95, 680, 290, 52, "メニューへ戻る");
+    drawButton(95, 680, 290, 52, t("backMenu"));
   }
 
   function drawHowToSection(title, y, lines) {
@@ -2147,7 +2309,7 @@
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 24px sans-serif";
-    ctx.fillText(stage.name, W / 2, 155);
+    ctx.fillText(stageName(stage), W / 2, 155);
 
     drawButton(45, 135, 70, 42, "<");
     drawButton(365, 135, 70, 42, ">");
@@ -2158,7 +2320,7 @@
     if (rankings.length === 0) {
       ctx.fillStyle = "rgba(255,255,255,0.8)";
       ctx.textAlign = "center";
-      ctx.fillText("まだ記録がありません", W / 2, 330);
+      ctx.fillText(t("noRecords"), W / 2, 330);
     } else {
       for (let i = 0; i < rankings.length; i++) {
         const r = rankings[i];
@@ -2180,12 +2342,12 @@
       }
     }
 
-    drawButton(95, 680, 290, 52, "メニューへ戻る");
+    drawButton(95, 680, 290, 52, t("backMenu"));
 
     ctx.fillStyle = "rgba(255,255,255,0.72)";
     ctx.font = "13px sans-serif";
     ctx.textAlign = "center";
-    ctx.fillText("左右キーでステージ切替", W / 2, 760);
+    ctx.fillText(t("stageSwitchHint"), W / 2, 760);
   }
 
   function drawResult() {
@@ -2194,36 +2356,36 @@
 
     ctx.textAlign = "center";
 
+    if (resultData.clear) {
+      drawResultCheckers(124);
+      drawResultCheckers(420);
+    }
+
     ctx.fillStyle = resultData.clear ? "#fff36b" : "#ff4b5c";
     ctx.font = "bold 42px monospace";
     ctx.fillText(resultData.clear ? "STAGE CLEAR!" : "CRASH!", W / 2, 195);
-
-    if (resultData.clear) {
-      drawResultCheckers(152);
-      drawResultCheckers(410);
-    }
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 26px monospace";
     ctx.fillText(`SCORE ${resultData.score}`, W / 2, 265);
 
     ctx.font = "18px sans-serif";
-    ctx.fillText(`ステージ: ${currentStage.name}`, W / 2, 310);
+    ctx.fillText(`${t("stage")}: ${stageName(currentStage)}`, W / 2, 310);
     ctx.fillText(`COIN: ${coinCount}`, W / 2, 338);
 
     if (resultData.rank) {
       ctx.fillStyle = "#20b7ff";
       ctx.font = "bold 22px sans-serif";
-      ctx.fillText(`ランキング ${resultData.rank}位 入賞!`, W / 2, 385);
+      ctx.fillText(language === "en" ? `${t("rankIn")}${resultData.rank}${t("rankSuffix")}` : `${t("rankIn")} ${resultData.rank}${t("rankSuffix")}`, W / 2, 385);
     } else {
       ctx.fillStyle = "#ffffff";
       ctx.font = "17px sans-serif";
-      ctx.fillText("ランキング圏外", W / 2, 385);
+      ctx.fillText(t("noRank"), W / 2, 385);
     }
 
-    drawButton(95, 455, 290, 54, "もう一度");
-    drawButton(95, 530, 290, 50, "ランキング");
-    drawButton(95, 600, 290, 50, "メニューへ");
+    drawButton(95, 455, 290, 54, t("retry"));
+    drawButton(95, 530, 290, 50, t("ranking"));
+    drawButton(95, 600, 290, 50, t("menu"));
   }
 
   function drawResultCheckers(y) {
@@ -2243,9 +2405,14 @@
     ctx.fill();
 
     ctx.fillStyle = "#00151f";
-    ctx.font = "bold 21px sans-serif";
+    let fontSize = 21;
+    ctx.font = `bold ${fontSize}px sans-serif`;
+    while (ctx.measureText(text).width > w - 20 && fontSize > 13) {
+      fontSize -= 1;
+      ctx.font = `bold ${fontSize}px sans-serif`;
+    }
     ctx.textAlign = "center";
-    ctx.fillText(text, x + w / 2, y + h / 2 + 8);
+    ctx.fillText(text, x + w / 2, y + h / 2 + fontSize * 0.35);
   }
 
   function roundRect(x, y, w, h, r) {
@@ -2281,6 +2448,14 @@
     }
   }
 
+  function loadLanguageSetting() {
+    try {
+      return localStorage.getItem("retro_dodge_language") === "en" ? "en" : "ja";
+    } catch (e) {
+      return "ja";
+    }
+  }
+
   function toggleSound() {
     soundEnabled = !soundEnabled;
 
@@ -2294,6 +2469,24 @@
       initAudio();
       playSound("coin");
     }
+  }
+
+  function toggleLanguage() {
+    language = language === "ja" ? "en" : "ja";
+
+    try {
+      localStorage.setItem("retro_dodge_language", language);
+    } catch (e) {
+      // Storage may be unavailable in private browsing.
+    }
+
+    playSound("move");
+  }
+
+  function activateSettingsAction() {
+    if (settingsActionIndex === 0) toggleSound();
+    if (settingsActionIndex === 1) toggleLanguage();
+    if (settingsActionIndex === 2) state = STATES.MENU;
   }
 
   function playSound(type) {
@@ -2423,37 +2616,43 @@
   function handleTap(x, y) {
     if (state === STATES.MENU) {
       for (let i = 0; i < STAGES.length; i++) {
-        const by = 242 + i * 52;
+        const by = 412 + i * 48;
         if (isInside(x, y, 70, by, 340, 42)) {
           stageIndex = i;
           return;
         }
       }
 
-      if (isInside(x, y, 95, 420, 290, 52)) {
+      if (isInside(x, y, 95, 570, 290, 52)) {
         resetGame();
         return;
       }
 
-      if (isInside(x, y, 95, 488, 290, 46)) {
+      if (isInside(x, y, 95, 636, 290, 42)) {
         state = STATES.RANKING;
         return;
       }
 
-      if (isInside(x, y, 95, 546, 290, 46)) {
+      if (isInside(x, y, 95, 690, 138, 42)) {
+        settingsActionIndex = 0;
         state = STATES.SETTINGS;
         return;
       }
 
-      if (isInside(x, y, 95, 604, 290, 46)) {
+      if (isInside(x, y, 247, 690, 138, 42)) {
         state = STATES.HOW_TO;
         return;
       }
     }
 
     if (state === STATES.SETTINGS) {
-      if (isInside(x, y, 120, 285, 240, 66)) {
+      if (isInside(x, y, 120, 232, 240, 62)) {
         toggleSound();
+        return;
+      }
+
+      if (isInside(x, y, 120, 385, 240, 62)) {
+        toggleLanguage();
         return;
       }
 
@@ -2591,6 +2790,7 @@
       }
 
       if (key === "s") {
+        settingsActionIndex = 0;
         state = STATES.SETTINGS;
       }
 
@@ -2618,9 +2818,17 @@
     }
 
     if (state === STATES.SETTINGS) {
+      if (key === "arrowup" || key === "w") {
+        settingsActionIndex = (settingsActionIndex + 2) % 3;
+      }
+
+      if (key === "arrowdown" || key === "s") {
+        settingsActionIndex = (settingsActionIndex + 1) % 3;
+      }
+
       if (key === "enter" || key === " ") {
         e.preventDefault();
-        toggleSound();
+        activateSettingsAction();
       }
 
       if (key === "escape" || key === "backspace") {
