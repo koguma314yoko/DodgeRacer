@@ -130,6 +130,7 @@
     SETTINGS: "settings",
     HOW_TO: "how_to",
     PLAYING: "playing",
+    PAUSED: "paused",
     RESULT: "result"
   };
 
@@ -250,7 +251,10 @@
       rankSuffix: "位 入賞!",
       noRank: "ランキング圏外",
       retry: "もう一度",
-      menu: "メニューへ"
+      menu: "メニューへ",
+      pause: "一時停止",
+      resume: "再開",
+      pauseHint: "P / ESC でも再開できます"
     },
     en: {
       menuLead1: "Dodge obstacles through straights and curves",
@@ -292,7 +296,10 @@
       rankSuffix: "!",
       noRank: "Not ranked",
       retry: "Retry",
-      menu: "Menu"
+      menu: "Menu",
+      pause: "Paused",
+      resume: "Resume",
+      pauseHint: "Press P / ESC to resume"
     }
   };
 
@@ -478,7 +485,7 @@
     const worldY = road.scroll + H - y;
     const offset = roadOffsetAtWorld(worldY);
     const remaining = currentStage.clearTime - gameTime;
-    const straightBlend = state === STATES.PLAYING
+    const straightBlend = (state === STATES.PLAYING || state === STATES.PAUSED)
       ? smoothStep(clamp((7 - remaining) / 5, 0, 1))
       : 0;
     return offset * (1 - straightBlend);
@@ -1027,6 +1034,8 @@
 
     updateGamepad();
 
+    if (state === STATES.PAUSED) return;
+
     if (state !== STATES.PLAYING) {
       updateParticles(dt);
       return;
@@ -1368,6 +1377,18 @@
     if (menuActionIndex === 3) state = STATES.HOW_TO;
   }
 
+  function pauseGame() {
+    if (state !== STATES.PLAYING) return;
+    state = STATES.PAUSED;
+    playSound("move");
+  }
+
+  function resumeGame() {
+    if (state !== STATES.PAUSED) return;
+    state = STATES.PLAYING;
+    playSound("move");
+  }
+
   function updateGamepad() {
     const pads = navigator.getGamepads ? navigator.getGamepads() : [];
     const pad = pads[0];
@@ -1380,11 +1401,18 @@
     const up = axisY < -0.45 || pad.buttons[12]?.pressed;
     const down = axisY > 0.45 || pad.buttons[13]?.pressed;
     const decide = pad.buttons[0]?.pressed || pad.buttons[9]?.pressed;
+    const pause = pad.buttons[9]?.pressed;
     const cancel = pad.buttons[1]?.pressed;
 
     if (gamepadCooldown > 0) return;
 
     if (state === STATES.PLAYING) {
+      if (cancel || pause) {
+        pauseGame();
+        gamepadCooldown = 0.25;
+        return;
+      }
+
       if (left) {
         movePlayer(-1);
         gamepadCooldown = 0.18;
@@ -1393,6 +1421,20 @@
       if (right) {
         movePlayer(1);
         gamepadCooldown = 0.18;
+      }
+
+      return;
+    }
+
+    if (state === STATES.PAUSED) {
+      if (decide) {
+        resumeGame();
+        gamepadCooldown = 0.25;
+      }
+
+      if (cancel) {
+        state = STATES.MENU;
+        gamepadCooldown = 0.25;
       }
 
       return;
@@ -1504,13 +1546,14 @@
     drawPickups();
     drawObstacles();
 
-    if (state === STATES.PLAYING || state === STATES.RESULT) {
+    if (state === STATES.PLAYING || state === STATES.PAUSED || state === STATES.RESULT) {
       drawPlayer();
     }
 
     drawParticles();
 
-    if (state === STATES.PLAYING) drawGameUI();
+    if (state === STATES.PLAYING || state === STATES.PAUSED) drawGameUI();
+    if (state === STATES.PAUSED) drawPauseMenu();
     if (state === STATES.MENU) drawMenu();
     if (state === STATES.RANKING) drawRanking();
     if (state === STATES.SETTINGS) drawSettings();
@@ -2157,6 +2200,36 @@
     ctx.font = "13px sans-serif";
     ctx.textAlign = "center";
     ctx.fillText(t("controlHint"), W / 2, H - 30);
+
+    drawPauseButton();
+  }
+
+  function drawPauseButton() {
+    ctx.fillStyle = "rgba(0,0,0,0.48)";
+    roundRect(394, 18, 56, 46, 8);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 20px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("II", 422, 48);
+  }
+
+  function drawPauseMenu() {
+    ctx.fillStyle = "rgba(0,0,0,0.62)";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff36b";
+    ctx.font = "bold 38px sans-serif";
+    ctx.fillText(t("pause"), W / 2, 260);
+
+    drawButton(95, 340, 290, 54, t("resume"));
+    drawButton(95, 415, 290, 50, t("menu"));
+
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.font = "14px sans-serif";
+    ctx.fillText(t("pauseHint"), W / 2, 515);
   }
 
   function drawMenu() {
@@ -2614,6 +2687,26 @@
   }
 
   function handleTap(x, y) {
+    if (state === STATES.PLAYING) {
+      if (isInside(x, y, 394, 18, 56, 46)) {
+        pauseGame();
+      }
+
+      return;
+    }
+
+    if (state === STATES.PAUSED) {
+      if (isInside(x, y, 95, 340, 290, 54)) {
+        resumeGame();
+        return;
+      }
+
+      if (isInside(x, y, 95, 415, 290, 50)) {
+        state = STATES.MENU;
+        return;
+      }
+    }
+
     if (state === STATES.MENU) {
       for (let i = 0; i < STAGES.length; i++) {
         const by = 412 + i * 48;
@@ -2738,7 +2831,9 @@
 
     const p = getCanvasPoint(e.clientX, e.clientY);
 
-    if (state !== STATES.PLAYING) {
+    if (state === STATES.PLAYING && isInside(p.x, p.y, 394, 18, 56, 46)) {
+      handleTap(p.x, p.y);
+    } else if (state !== STATES.PLAYING) {
       handleTap(p.x, p.y);
     }
 
@@ -2750,6 +2845,12 @@
     const key = e.key.toLowerCase();
 
     if (state === STATES.PLAYING) {
+      if (key === "p" || key === "escape") {
+        e.preventDefault();
+        pauseGame();
+        return;
+      }
+
       if (key === "arrowleft" || key === "a") {
         e.preventDefault();
         movePlayer(-1);
@@ -2758,6 +2859,19 @@
       if (key === "arrowright" || key === "d") {
         e.preventDefault();
         movePlayer(1);
+      }
+
+      return;
+    }
+
+    if (state === STATES.PAUSED) {
+      if (key === "p" || key === "escape" || key === "enter" || key === " ") {
+        e.preventDefault();
+        resumeGame();
+      }
+
+      if (key === "m" || key === "backspace") {
+        state = STATES.MENU;
       }
 
       return;
