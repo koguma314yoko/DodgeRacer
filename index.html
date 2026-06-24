@@ -308,6 +308,8 @@
   let stageIndex = 0;
   let menuActionIndex = 0;
   let settingsActionIndex = 0;
+  let pauseActionIndex = 0;
+  let resultActionIndex = 0;
   let currentStage = STAGES[0];
 
   let lastTime = 0;
@@ -966,6 +968,7 @@
     }
 
     playSound(clear ? "clear" : "crash");
+    resultActionIndex = 0;
     state = STATES.RESULT;
   }
 
@@ -1379,6 +1382,7 @@
 
   function pauseGame() {
     if (state !== STATES.PLAYING) return;
+    pauseActionIndex = 0;
     state = STATES.PAUSED;
     playSound("move");
   }
@@ -1427,8 +1431,14 @@
     }
 
     if (state === STATES.PAUSED) {
+      if (up || down) {
+        pauseActionIndex = (pauseActionIndex + 1) % 2;
+        gamepadCooldown = 0.22;
+      }
+
       if (decide) {
-        resumeGame();
+        if (pauseActionIndex === 0) resumeGame();
+        if (pauseActionIndex === 1) state = STATES.MENU;
         gamepadCooldown = 0.25;
       }
 
@@ -1522,8 +1532,20 @@
     }
 
     if (state === STATES.RESULT) {
+      if (up) {
+        resultActionIndex = (resultActionIndex + 2) % 3;
+        gamepadCooldown = 0.22;
+      }
+
+      if (down) {
+        resultActionIndex = (resultActionIndex + 1) % 3;
+        gamepadCooldown = 0.22;
+      }
+
       if (decide) {
-        resetGame();
+        if (resultActionIndex === 0) resetGame();
+        if (resultActionIndex === 1) state = STATES.RANKING;
+        if (resultActionIndex === 2) state = STATES.MENU;
         gamepadCooldown = 0.22;
       }
 
@@ -2224,8 +2246,8 @@
     ctx.font = "bold 38px sans-serif";
     ctx.fillText(t("pause"), W / 2, 260);
 
-    drawButton(95, 340, 290, 54, t("resume"));
-    drawButton(95, 415, 290, 50, t("menu"));
+    drawButton(95, 340, 290, 54, t("resume"), pauseActionIndex === 0);
+    drawButton(95, 415, 290, 50, t("menu"), pauseActionIndex === 1);
 
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     ctx.font = "14px sans-serif";
@@ -2460,9 +2482,9 @@
       ctx.fillText(t("noRank"), W / 2, 385);
     }
 
-    drawButton(95, 455, 290, 54, t("retry"));
-    drawButton(95, 530, 290, 50, t("ranking"));
-    drawButton(95, 600, 290, 50, t("menu"));
+    drawButton(95, 455, 290, 54, t("retry"), resultActionIndex === 0);
+    drawButton(95, 530, 290, 50, t("ranking"), resultActionIndex === 1);
+    drawButton(95, 600, 290, 50, t("menu"), resultActionIndex === 2);
   }
 
   function drawResultCheckers(y) {
@@ -2869,9 +2891,19 @@
     }
 
     if (state === STATES.PAUSED) {
-      if (key === "p" || key === "escape" || key === "enter" || key === " ") {
+      if (key === "arrowup" || key === "w" || key === "arrowdown" || key === "s") {
+        pauseActionIndex = (pauseActionIndex + 1) % 2;
+      }
+
+      if (key === "p" || key === "escape") {
         e.preventDefault();
         resumeGame();
+      }
+
+      if (key === "enter" || key === " ") {
+        e.preventDefault();
+        if (pauseActionIndex === 0) resumeGame();
+        if (pauseActionIndex === 1) state = STATES.MENU;
       }
 
       if (key === "m" || key === "backspace") {
@@ -2966,9 +2998,19 @@
     }
 
     if (state === STATES.RESULT) {
+      if (key === "arrowup" || key === "w") {
+        resultActionIndex = (resultActionIndex + 2) % 3;
+      }
+
+      if (key === "arrowdown" || key === "s") {
+        resultActionIndex = (resultActionIndex + 1) % 3;
+      }
+
       if (key === "enter" || key === " ") {
         e.preventDefault();
-        resetGame();
+        if (resultActionIndex === 0) resetGame();
+        if (resultActionIndex === 1) state = STATES.RANKING;
+        if (resultActionIndex === 2) state = STATES.MENU;
       }
 
       if (key === "r") {
