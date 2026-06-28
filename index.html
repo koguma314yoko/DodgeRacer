@@ -55,6 +55,7 @@
       "assets/enemy_car02.png",
       "assets/enemy_car03.png",
       "assets/enemy_car04.png",
+      "assets/enemy_Motorcycle00.png",
       "assets/enemy_car.png"
     ],
     cone: "assets/cone.png",
@@ -89,6 +90,7 @@
     "assets/enemy_car02.png": { x: 77, y: 18, w: 102, h: 224 },
     "assets/enemy_car03.png": { x: 76, y: 19, w: 104, h: 216 },
     "assets/enemy_car04.png": { x: 72, y: 18, w: 113, h: 219 },
+    "assets/enemy_Motorcycle00.png": { x: 77, y: 12, w: 101, h: 232 },
     "assets/cone.png": { x: 50, y: 24, w: 156, h: 194 },
     "assets/oil.png": { x: 15, y: 38, w: 226, h: 184 },
     "assets/barrier.png": { x: 27, y: 67, w: 202, h: 117 },
@@ -304,7 +306,7 @@
   };
 
   let dpr = 1;
-  let state = STATES.MENU;
+  let state = loadHowToSeen() ? STATES.MENU : STATES.HOW_TO;
   let stageIndex = 0;
   let menuActionIndex = 0;
   let settingsActionIndex = 0;
@@ -331,6 +333,9 @@
   let finishLineActive = false;
   let finishLineY = -100;
   let goalFlashTimer = 0;
+  let crashFlashTimer = 0;
+  let crashFlashX = 0;
+  let crashFlashY = 0;
   let soundEnabled = loadSoundSetting();
   let language = loadLanguageSetting();
   let audioCtx = null;
@@ -617,8 +622,9 @@
     else if (r < 0.86) type = "oil";
     else type = "barrier";
 
-    let w = 50;
-    let h = 98;
+    const assetVariant = type === "car" ? carAssetVariantForStage() : 0;
+    let w = type === "car" && isMotorcycleVariant(assetVariant) ? 40 : 50;
+    let h = type === "car" && isMotorcycleVariant(assetVariant) ? 94 : 98;
 
     if (type === "cone") {
       w = 42;
@@ -645,7 +651,7 @@
       w,
       h,
       type,
-      assetVariant: type === "car" ? carAssetVariantForStage() : 0,
+      assetVariant,
       speedRatio: type === "car" ? 0.56 + Math.random() * 0.28 : 1,
       drift: type === "car" ? (Math.random() - 0.5) * 0.08 : 0,
       lanePosition: lane,
@@ -927,6 +933,31 @@
     }
   }
 
+  function addCrashEffect(x, y) {
+    crashFlashTimer = 0.55;
+    crashFlashX = x;
+    crashFlashY = y;
+
+    addParticles(x, y, "#ffffff", 18);
+    addParticles(x, y, "#fff36b", 34);
+    addParticles(x, y, "#ff8a1f", 34);
+    addParticles(x, y, "#ff3b4f", 24);
+
+    for (let i = 0; i < 26; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const power = 180 + Math.random() * 380;
+      particles.push({
+        x,
+        y,
+        vx: Math.cos(angle) * power,
+        vy: Math.sin(angle) * power,
+        life: 0.55 + Math.random() * 0.45,
+        size: 5 + Math.random() * 9,
+        color: i % 3 === 0 ? "#ffffff" : (i % 3 === 1 ? "#ff4b5c" : "#fff36b")
+      });
+    }
+  }
+
   function rectsHit(a, b) {
     const ax = a.x - a.w / 2;
     const ay = a.y - a.h / 2;
@@ -1034,6 +1065,7 @@
     if (inputCooldown > 0) inputCooldown -= dt;
     if (gamepadCooldown > 0) gamepadCooldown -= dt;
     if (goalFlashTimer > 0) goalFlashTimer -= dt;
+    if (crashFlashTimer > 0) crashFlashTimer -= dt;
 
     updateGamepad();
 
@@ -1197,6 +1229,7 @@
           triggerOilSlip();
           score = Math.max(0, score - 50);
         } else {
+          addCrashEffect((player.x + ob.x) / 2, (player.y + ob.y) / 2);
           finishGame(false);
           break;
         }
@@ -1524,7 +1557,7 @@
 
     if (state === STATES.HOW_TO) {
       if (decide || cancel) {
-        state = STATES.MENU;
+        returnToMenuFromHowTo();
         gamepadCooldown = 0.25;
       }
 
@@ -1581,7 +1614,35 @@
     if (state === STATES.SETTINGS) drawSettings();
     if (state === STATES.HOW_TO) drawHowTo();
     if (state === STATES.RESULT) drawResult();
+    drawCrashFlash();
     drawGoalFlash();
+  }
+
+  function drawCrashFlash() {
+    if (crashFlashTimer <= 0) return;
+
+    const t = clamp(crashFlashTimer / 0.55, 0, 1);
+    const ring = 32 + (1 - t) * 160;
+
+    ctx.save();
+    ctx.globalAlpha = 0.34 * t;
+    ctx.fillStyle = "#ff3b4f";
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.globalAlpha = 0.82 * t;
+    ctx.strokeStyle = "#fff36b";
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(crashFlashX, crashFlashY, ring, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.58 * t;
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(crashFlashX, crashFlashY, ring * 0.62, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
   }
 
   function drawGoalFlash() {
@@ -1929,7 +1990,11 @@
     const indexes = list
       .map((asset, index) => {
         const isAdvancedCar = asset.path.includes("enemy_car03") || asset.path.includes("enemy_car04");
-        const allowed = currentStage.key !== "easy" || !isAdvancedCar;
+        const isMotorcycle = asset.path.includes("enemy_Motorcycle");
+        const allowed = (
+          (currentStage.key !== "easy" || !isAdvancedCar) &&
+          (currentStage.key === "hard" || !isMotorcycle)
+        );
         return asset.loaded && allowed ? index : -1;
       })
       .filter(index => index >= 0);
@@ -1939,6 +2004,11 @@
     }
 
     return 0;
+  }
+
+  function isMotorcycleVariant(variant) {
+    const asset = (assets.car || [])[variant];
+    return !!asset && asset.path.includes("enemy_Motorcycle");
   }
 
   function getAsset(key, variant = 0) {
@@ -2555,6 +2625,24 @@
     }
   }
 
+  function loadHowToSeen() {
+    try {
+      return localStorage.getItem("retro_dodge_how_to_seen") === "yes";
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function returnToMenuFromHowTo() {
+    try {
+      localStorage.setItem("retro_dodge_how_to_seen", "yes");
+    } catch (e) {
+      // Storage may be unavailable in private browsing.
+    }
+
+    state = STATES.MENU;
+  }
+
   function toggleSound() {
     soundEnabled = !soundEnabled;
 
@@ -2783,7 +2871,7 @@
 
     if (state === STATES.HOW_TO) {
       if (isInside(x, y, 95, 680, 290, 52)) {
-        state = STATES.MENU;
+        returnToMenuFromHowTo();
         return;
       }
     }
@@ -2991,7 +3079,7 @@
     if (state === STATES.HOW_TO) {
       if (key === "escape" || key === "backspace" || key === "enter" || key === " ") {
         e.preventDefault();
-        state = STATES.MENU;
+        returnToMenuFromHowTo();
       }
 
       return;
